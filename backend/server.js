@@ -1,0 +1,114 @@
+import express from 'express';
+import cors from 'cors';
+import axios from 'axios';
+
+const app = express();
+app.use(express.json());
+app.use(cors());
+
+const OIDC_ISSUER = 'http://localhost:3001';
+const CLIENT_ID = 'my-random-client-id';
+const CLIENT_SECRET = 'my-random-and-very-long-client-secret';
+const REDIRECT_URI = 'http://localhost:3000/callback';
+
+const exchangeCodeForToken = async (code) => {
+    try {
+        const response = await axios.post(`${OIDC_ISSUER}/oidc/token`,
+            `grant_type=authorization_code&code=${code}&redirect_uri=${REDIRECT_URI}&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`,
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+        return response.data;
+    } catch (error) {
+        console.error('Error exchanging code for token:', error.response?.data || error.message);
+        throw error;
+    }
+};
+
+const verifyToken = async (token) => {
+    try {
+        const response = await axios.get(`${OIDC_ISSUER}/oidc/.well-known/openid-configuration`);
+        const config = response.data;
+        const introspectionEndpoint = config.introspection_endpoint;
+
+        const introspectionResponse = await axios.post(introspectionEndpoint,
+            `token=${token}`,
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                auth: {
+                    username: CLIENT_ID,
+                    password: CLIENT_SECRET
+                }
+            }
+        );
+
+        console.log('Introspection response:', introspectionResponse.data);
+
+        if (introspectionResponse.data.active === true) {
+            return { isValid: true, tokenInfo: introspectionResponse.data };
+        } else {
+            console.log('Token is not active. Expiration:', introspectionResponse.data.exp);
+            return { isValid: false, tokenInfo: introspectionResponse.data };
+        }
+    } catch (error) {
+        console.error('Token introspection failed:', error.response?.data || error.message);
+        return { isValid: false, error: error.message };
+    }
+};
+
+const authenticateToken = async (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token == null) return res.sendStatus(401);
+
+    const { isValid, tokenInfo, error } = await verifyToken(token);
+    if (!isValid) {
+        console.error('Token validation failed:', tokenInfo || error);
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    req.user = tokenInfo;
+    next();
+};
+
+app.post('/exchange', async (req, res) => {
+    const { code } = req.body;
+    try {
+        const tokenData = await exchangeCodeForToken(code);
+        res.json(tokenData);
+    } catch (error) {
+        res.status(400).json({ error: 'Failed to exchange code for token' });
+    }
+});
+
+app.post('/refresh', async (req, res) => {
+    const { refresh_token } = req.body;
+    try {
+        const response = await axios.post(`${OIDC_ISSUER}/oidc/token`,
+            `grant_type=refresh_token&refresh_token=${refresh_token}&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`,
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+        res.json(response.data);
+    } catch (error) {
+        console.error('Error refreshing token:', error.response?.data || error.message);
+        res.status(400).json({ error: 'Failed to refresh token' });
+    }
+});
+
+app.get('/api/private', authenticateToken, (req, res) => {
+    res.json({ message: 'This is private data!', timestamp: new Date().toISOString(), user: req.user });
+});
+
+app.listen(3002, () => {
+    console.log('Server is running on http://localhost:3002');
+});
