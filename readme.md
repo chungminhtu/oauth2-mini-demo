@@ -1,3 +1,4 @@
+```mermaid
 sequenceDiagram
     participant User
     participant ReactApp as React App (Client)
@@ -34,3 +35,4 @@ sequenceDiagram
         OIDCProvider->>BackendServer: Token Info (active: true)
         BackendServer->>ReactApp: Private Data
     end
+```    
