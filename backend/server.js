@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
+import jwt from 'jsonwebtoken';
+import jwksClient from 'jwks-rsa';
 
 const app = express();
 app.use(express.json());
@@ -10,6 +12,51 @@ const OIDC_ISSUER = 'http://localhost:3001';
 const CLIENT_ID = 'my-random-client-id';
 const CLIENT_SECRET = 'my-random-and-very-long-client-secret';
 const REDIRECT_URI = 'http://localhost:3000/callback';
+
+const client = jwksClient({
+    jwksUri: `${OIDC_ISSUER}/oidc/jwks`
+});
+
+const getKey = (header, callback) => {
+    client.getSigningKey(header.kid, (err, key) => {
+        if (err) {
+            return callback(err);
+        }
+        const signingKey = key.getPublicKey();
+
+        callback(null, signingKey);
+    });
+};
+
+const verifyTokenWithJWKS = (token) => {
+    return new Promise((resolve, reject) => {
+        console.log({ token });
+        jwt.verify(token, getKey, {
+            algorithms: ['RS256']
+        }, (err, decoded) => {
+            if (err) {
+                return reject(err);
+            }
+            resolve(decoded);
+        });
+    });
+};
+
+const authenticateTokenJWKS = async (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token == null) return res.sendStatus(401);
+
+    try {
+        const decodedToken = await verifyTokenWithJWKS(token);
+        req.user = decodedToken;
+        next();
+    } catch (error) {
+        console.error('Token validation failed:', error.message);
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+};
 
 const exchangeCodeForToken = async (code) => {
     try {
@@ -105,9 +152,14 @@ app.post('/refresh', async (req, res) => {
     }
 });
 
+app.get('/api/privateJWKS', authenticateTokenJWKS, (req, res) => {
+    res.json({ message: 'This is private data!', timestamp: new Date().toISOString(), user: req.user });
+});
+
 app.get('/api/private', authenticateToken, (req, res) => {
     res.json({ message: 'This is private data!', timestamp: new Date().toISOString(), user: req.user });
 });
+
 
 app.listen(3002, () => {
     console.log('Server is running on http://localhost:3002');

@@ -21,19 +21,18 @@ const App = () => {
   const exchangeCodeForToken = async (code) => {
     try {
       const response = await axios.post('http://localhost:3002/exchange', { code });
+      console.log('Token exchange response:', response.data);
       const { access_token, refresh_token, expires_in } = response.data;
       setToken(access_token);
       localStorage.setItem('access_token', access_token);
       if (refresh_token) {
         localStorage.setItem('refresh_token', refresh_token);
       }
-      // Set a timer to refresh the token before it expires
       setTimeout(() => refreshToken(), (expires_in - 300) * 1000);
 
-      // Clear the URL parameters
       window.history.replaceState({}, document.title, "/");
     } catch (error) {
-      console.error('Error exchanging code for token:', error);
+      console.error('Error exchanging code for token:', error.response?.data || error.message);
     }
   };
 
@@ -42,27 +41,29 @@ const App = () => {
     if (refresh_token) {
       try {
         const response = await axios.post('http://localhost:3002/refresh', { refresh_token });
+        console.log('Token refresh response:', response.data);
         const { access_token, expires_in } = response.data;
         setToken(access_token);
         localStorage.setItem('access_token', access_token);
-        // Set a new timer for the next refresh
         setTimeout(() => refreshToken(), (expires_in - 300) * 1000);
       } catch (error) {
-        console.error('Error refreshing token:', error);
-        // Handle refresh error (e.g., logout user)
+        console.error('Error refreshing token:', error.response?.data || error.message);
         handleLogout();
       }
     }
   };
 
-  const fetchPrivateData = async () => {
+  const fetchPrivateData = async (useJwks = false) => {
     try {
-      const response = await axios.get(API_ENDPOINT, {
+      const endpoint = useJwks ? `${API_ENDPOINT}jwks` : API_ENDPOINT;
+      console.log(`Fetching private data from: ${endpoint}`);
+      console.log('Using token:', token);
+      const response = await axios.get(endpoint, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setPrivateData(response.data);
     } catch (error) {
-      console.error('Error fetching private data:', error);
+      console.error('Error fetching private data:', error.response?.data || error.message);
       if (error.response && error.response.status === 401) {
         handleLogout();
         alert('Your session has expired. Please log out and log in again.');
@@ -77,10 +78,8 @@ const App = () => {
       });
       setPrivateData(response.data);
     } catch (error) {
-      console.error('Error fetching private data:', error);
-      if (error.response && error.response.status === 401) {
-        alert('Your session has expired or you dont have permission. Please log out and log in again.');
-      }
+      console.error('Error fetching private data with fake token:', error.response?.data || error.message);
+      alert('As expected, the request with a fake token was rejected.');
     }
   };
 
@@ -103,8 +102,9 @@ const App = () => {
       ) : (
         <div>
           <p>You are logged in!</p>
-          <button onClick={fetchPrivateDataWithFakeToken}>Fetch Private Data with fake token</button>
-          <button onClick={fetchPrivateData}>Fetch Private Data</button>
+          <button onClick={() => fetchPrivateData(false)}>Fetch Private Data via Introspection</button>
+          <button onClick={() => fetchPrivateData(true)}>Fetch Private Data via JWKS</button>
+          <button onClick={fetchPrivateDataWithFakeToken}>Test with Fake Token</button>
           <button onClick={handleLogout}>Logout</button>
           {privateData && (
             <pre>{JSON.stringify(privateData, null, 2)}</pre>
