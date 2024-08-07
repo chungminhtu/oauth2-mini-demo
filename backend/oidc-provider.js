@@ -3,9 +3,9 @@ import { Provider } from 'oidc-provider';
 import bodyParser from 'body-parser';
 import cors from 'cors';
 
-const app = express();
-app.use(bodyParser.json());
-app.use(cors());
+const oidcApp = express();
+oidcApp.use(bodyParser.json());
+oidcApp.use(cors());
 
 const configuration = {
     clients: [{
@@ -15,6 +15,7 @@ const configuration = {
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
     }],
+    registration: { enabled: true },
     jwtResponseModes: { enabled: true },
     pkce: {
         required: () => false,
@@ -27,6 +28,7 @@ const configuration = {
         introspection: { enabled: true },
         revocation: { enabled: true }
     },
+    scope: "openid address email phone profile offline",
     ttl: {
         AccessToken: 3600,
         IdToken: 3600,
@@ -73,7 +75,7 @@ const configuration = {
 const oidc = new Provider('http://localhost:3001', configuration);
 
 // Example login and consent views (you may want to customize these)
-app.get('/interaction/:uid', async (req, res) => {
+oidcApp.get('/interaction/:uid', async (req, res) => {
     try {
         const details = await oidc.interactionDetails(req, res);
         const { prompt: { name } } = details;
@@ -100,7 +102,7 @@ app.get('/interaction/:uid', async (req, res) => {
     }
 });
 
-app.post('/interaction/:uid/login', async (req, res) => {
+oidcApp.post('/interaction/:uid/login', async (req, res) => {
     try {
         const result = {
             login: {
@@ -114,7 +116,7 @@ app.post('/interaction/:uid/login', async (req, res) => {
     }
 });
 
-app.post('/interaction/:uid/confirm', async (req, res) => {
+oidcApp.post('/interaction/:uid/confirm', async (req, res) => {
     try {
         const result = {
             consent: {
@@ -129,19 +131,20 @@ app.post('/interaction/:uid/confirm', async (req, res) => {
     }
 });
 
-app.use('/oidc', oidc.callback());
+oidcApp.use('/oidc', oidc.callback());
 
 // Error handling
-app.use((err, req, res, next) => {
+oidcApp.use((err, req, res, next) => {
     console.error(err);
     res.status(err.status || 500).json({
         error: err.message || 'Internal Server Error',
     });
 });
+if (process.env.NODE_ENV === 'dev') {
+    const port = 3001;
+    oidcApp.listen(port, () => {
+        console.log(`OIDC Provider is listening on http://localhost:${port}`);
+    });
+}
 
-const port = 3001;
-app.listen(port, () => {
-    console.log(`OIDC Provider is listening on http://localhost:${port}`);
-});
-
-export default app;
+export default oidcApp;

@@ -29,7 +29,6 @@ const getKey = (header, callback) => {
 
 const verifyTokenWithJWKS = (token) => {
     return new Promise((resolve, reject) => {
-        console.log({ token });
         jwt.verify(token, getKey, {
             algorithms: ['RS256']
         }, (err, decoded) => {
@@ -66,6 +65,8 @@ const exchangeCodeForToken = async (code) => {
                 }
             }
         );
+        console.log("exchangeCodeForToken ", response.data);
+
         return response.data;
     } catch (error) {
         console.error('Error exchanging code for token:', error.response?.data || error.message);
@@ -158,7 +159,10 @@ app.get('/api/private', authenticateToken, (req, res) => {
     res.json({ message: 'This is private data!', timestamp: new Date().toISOString(), user: req.user });
 });
 
+if (process.env.NODE_ENV === 'dev') {
+    app.listen(3002, () => {
+        console.log('Server is running on http://localhost:3002');
+    });
+}
 
-app.listen(3002, () => {
-    console.log('Server is running on http://localhost:3002');
-});
+export default app;

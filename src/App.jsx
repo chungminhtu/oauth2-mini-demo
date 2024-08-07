@@ -26,6 +26,7 @@ const App = () => {
       const { access_token, refresh_token, expires_in, id_token } = response.data;
       setToken(access_token);
       localStorage.setItem('access_token', access_token);
+      localStorage.setItem('refresh_token', refresh_token);
       setIdToken(id_token);
       localStorage.setItem('id_token', id_token);
       if (refresh_token) {
@@ -47,6 +48,7 @@ const App = () => {
         const { access_token, refresh_token, expires_in, id_token } = response.data;
         setToken(access_token);
         localStorage.setItem('access_token', access_token);
+        localStorage.setItem('refresh_token', refresh_token);
         setIdToken(id_token);
         localStorage.setItem('id_token', id_token);
         setTimeout(() => refreshToken(), (expires_in - 300) * 1000);
@@ -85,7 +87,8 @@ const App = () => {
   };
 
   const handleLogin = () => {
-    window.location.href = `http://localhost:3001/oidc/auth?client_id=${CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=openid`;
+    const encodedRedirectUri = encodeURIComponent(REDIRECT_URI);
+    window.location.href = `http://localhost:3001/oidc/auth?client_id=${CLIENT_ID}&redirect_uri=${encodedRedirectUri}&response_type=code&scope=openid profile offline_access`;
   };
 
   const handleLogout = () => {
@@ -106,7 +109,8 @@ const App = () => {
         <div>
           <p>You are logged in!</p>
           <button onClick={() => fetchPrivateData(false)}>Fetch Private Data via Introspection</button>
-          <button onClick={() => fetchPrivateData(true)}>Fetch Private Data via JWKS</button>
+            <button onClick={() => fetchPrivateData(true)}>Fetch Private Data via JWKS</button>
+            <button onClick={() => refreshToken()}>Refresh new token</button>
           <button onClick={fetchPrivateDataWithFakeToken}>Test with Fake Token</button>
           <button onClick={handleLogout}>Logout</button>
           {privateData && (
