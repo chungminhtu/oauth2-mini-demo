@@ -7,6 +7,7 @@ const REDIRECT_URI = 'http://localhost:3000/callback';
 
 const App = () => {
   const [token, setToken] = useState(localStorage.getItem('access_token'));
+  const [idToken, setIdToken] = useState(localStorage.getItem('id_token'));
   const [privateData, setPrivateData] = useState(null);
 
   useEffect(() => {
@@ -22,14 +23,15 @@ const App = () => {
     try {
       const response = await axios.post('http://localhost:3002/exchange', { code });
       console.log('Token exchange response:', response.data);
-      const { access_token, refresh_token, expires_in } = response.data;
+      const { access_token, refresh_token, expires_in, id_token } = response.data;
       setToken(access_token);
       localStorage.setItem('access_token', access_token);
+      setIdToken(id_token);
+      localStorage.setItem('id_token', id_token);
       if (refresh_token) {
         localStorage.setItem('refresh_token', refresh_token);
       }
       setTimeout(() => refreshToken(), (expires_in - 300) * 1000);
-
       window.history.replaceState({}, document.title, "/");
     } catch (error) {
       console.error('Error exchanging code for token:', error.response?.data || error.message);
@@ -42,13 +44,14 @@ const App = () => {
       try {
         const response = await axios.post('http://localhost:3002/refresh', { refresh_token });
         console.log('Token refresh response:', response.data);
-        const { access_token, expires_in } = response.data;
+        const { access_token, refresh_token, expires_in, id_token } = response.data;
         setToken(access_token);
         localStorage.setItem('access_token', access_token);
+        setIdToken(id_token);
+        localStorage.setItem('id_token', id_token);
         setTimeout(() => refreshToken(), (expires_in - 300) * 1000);
       } catch (error) {
         console.error('Error refreshing token:', error.response?.data || error.message);
-        handleLogout();
       }
     }
   };
@@ -57,15 +60,13 @@ const App = () => {
     try {
       const endpoint = useJwks ? `${API_ENDPOINT}jwks` : API_ENDPOINT;
       console.log(`Fetching private data from: ${endpoint}`);
-      console.log('Using token:', token);
       const response = await axios.get(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${useJwks ? idToken : token}` },
       });
       setPrivateData(response.data);
     } catch (error) {
       console.error('Error fetching private data:', error.response?.data || error.message);
       if (error.response && error.response.status === 401) {
-        handleLogout();
         alert('Your session has expired. Please log out and log in again.');
       }
     }
@@ -89,7 +90,9 @@ const App = () => {
 
   const handleLogout = () => {
     setToken(null);
+    setIdToken(null);
     localStorage.removeItem('access_token');
+    localStorage.removeItem('id_token');
     localStorage.removeItem('refresh_token');
     setPrivateData(null);
   };
