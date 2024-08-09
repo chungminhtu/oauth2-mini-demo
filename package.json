@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "backend": "NODE_ENV=dev nodemon backend/server.js",
-    "SSO": "NODE_ENV=dev nodemon backend/oidc-provider.js",
+    "SSO": "NODE_ENV=dev DEBUG=oidc-provider:* nodemon backend/oidc-provider.js",
     "frontend": "vite --open"
   },
   "dependencies": {
@@ -14,6 +14,7 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.1.0",
+    "oidc-client": "^1.11.5",
     "oidc-provider": "^8.5.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

@@ -12,27 +12,33 @@ const configuration = {
         client_id: 'my-random-client-id',
         client_secret: 'my-random-and-very-long-client-secret',
         redirect_uris: ['http://localhost:3000/callback'],
-        grant_types: ['authorization_code', 'refresh_token'],
+        grant_types: [
+            'refresh_token',
+            'authorization_code'
+        ],
         response_types: ['code'],
+        scopes: ['openid', 'profile', 'offline_access'],
+        // scope: 'openid offline_access profile email',
+
     }],
-    registration: { enabled: true },
-    jwtResponseModes: { enabled: true },
     pkce: {
         required: () => false,
     },
+    scopes: ['openid', 'profile', 'offline_access'],
     claims: {
-        openid: ['sub'],
+        openid: ['sub', 'name', 'email'],
         profile: ['name', 'email']
     },
     features: {
         introspection: { enabled: true },
-        revocation: { enabled: true }
+        revocation: { enabled: true },
     },
-    scope: "openid address email phone profile offline",
     ttl: {
-        AccessToken: 3600,
-        IdToken: 3600,
-        RefreshToken: 1209600,
+        AccessToken: 2 * 60 * 60, // 2 hours in seconds
+        AuthorizationCode: 10 * 60, // 10 minutes in seconds
+        ClientCredentials: 10 * 60, // 10 minutes in seconds
+        IdToken: 2 * 60 * 60, // 2 hours in seconds
+        RefreshToken: 30 * 24 * 60 * 60, // 30 days in seconds
     },
     findAccount: (ctx, id) => {
         return {
@@ -73,6 +79,13 @@ const configuration = {
 };
 
 const oidc = new Provider('http://localhost:3001', configuration);
+
+oidc.on('grant.success', (ctx) => {
+    console.log('Grant Success:', ctx.oidc.entities);
+    console.log('Issued Tokens:', ctx.oidc.entities.AccessToken ? 'AccessToken' : 'No AccessToken',
+        ctx.oidc.entities.RefreshToken ? 'RefreshToken' : 'No RefreshToken');
+});
+
 
 // Example login and consent views (you may want to customize these)
 oidcApp.get('/interaction/:uid', async (req, res) => {

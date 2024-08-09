@@ -1,19 +1,24 @@
 import request from 'supertest';
-import app from './server.js';
-import oidcApp from './oidc-provider.js';
+import app from './server.js'; // Import your Express app
+import oidcApp from './oidc-provider.js'; // Import your OIDC provider app
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 
 const CLIENT_ID = 'my-random-client-id';
 const CLIENT_SECRET = 'my-random-and-very-long-client-secret';
-const REDIRECT_URI = 'http://localhost:3000/callback';
+let expressServer;
+let oidcServer;
+let authorizationCode;
+let accessToken;
+let refreshToken;
 
 describe('OAuth2 E2E Tests', () => {
-    let expressServer;
-    let oidcServer;
-
     beforeAll(() => {
-        expressServer = app.listen(3002);
-        oidcServer = oidcApp.listen(3001);
+        expressServer = app.listen(3002, () => {
+            console.log('Express server running on http://localhost:3002');
+        });
+        oidcServer = oidcApp.listen(3001, () => {
+            console.log('OIDC server running on http://localhost:3001');
+        });
     });
 
     afterAll(() => {
@@ -22,21 +27,17 @@ describe('OAuth2 E2E Tests', () => {
     });
 
     describe('Authorization Code Flow', () => {
-        let authorizationCode;
-        let accessToken;
-        let refreshToken;
-
         test('Should initiate authorization and receive code', async () => {
             const res = await request(oidcApp)
                 .get('/oidc/auth')
                 .query({
                     client_id: CLIENT_ID,
-                    redirect_uri: REDIRECT_URI,
+                    redirect_uri: 'http://localhost:3000/callback',
                     response_type: 'code',
                     scope: 'openid profile',
                 });
 
-            expect(res.status).toBe(303);
+            expect(res.status).toBe(302);
             const locationHeader = res.header.location;
             expect(locationHeader).toContain('/interaction/');
 
@@ -47,15 +48,15 @@ describe('OAuth2 E2E Tests', () => {
             await request(oidcApp)
                 .post(`/interaction/${uid}/login`)
                 .send('login=anyuser&password=anypass')
-                .expect(303);
+                .expect(302);
 
-            // const consentRes = await request(oidcApp)
-            //     .post(`/interaction/${uid}/confirm`)
-            //     .expect(303);
+            const consentRes = await request(oidcApp)
+                .post(`/interaction/${uid}/confirm`)
+                .expect(302);
 
-            // const callbackUrl = new URL(consentRes.header.location, `http://localhost:3001`);
-            // authorizationCode = callbackUrl.searchParams.get('code');
-            // expect(authorizationCode).toBeTruthy();
+            const callbackUrl = new URL(consentRes.header.location, `http://localhost:3001`);
+            authorizationCode = callbackUrl.searchParams.get('code');
+            expect(authorizationCode).toBeTruthy();
         });
 
         test('Should exchange code for tokens', async () => {

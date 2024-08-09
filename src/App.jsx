@@ -88,7 +88,7 @@ const App = () => {
 
   const handleLogin = () => {
     const encodedRedirectUri = encodeURIComponent(REDIRECT_URI);
-    window.location.href = `http://localhost:3001/oidc/auth?client_id=${CLIENT_ID}&redirect_uri=${encodedRedirectUri}&response_type=code&scope=openid profile offline_access`;
+    window.location.href = `http://localhost:3001/oidc/auth?client_id=${CLIENT_ID}&redirect_uri=${encodedRedirectUri}&response_type=code&scope=openid%20profileoffline_access&state=12345`;
   };
 
   const handleLogout = () => {

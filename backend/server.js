@@ -65,8 +65,7 @@ const exchangeCodeForToken = async (code) => {
                 }
             }
         );
-        console.log("exchangeCodeForToken ", response.data);
-
+        console.log("Raw response data:", response.data);
         return response.data;
     } catch (error) {
         console.error('Error exchanging code for token:', error.response?.data || error.message);
