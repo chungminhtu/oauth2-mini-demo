@@ -16,10 +16,8 @@ const configuration = {
             'refresh_token',
             'authorization_code'
         ],
-        response_types: ['code'],
-        scopes: ['openid', 'profile', 'offline_access'],
-        // scope: 'openid offline_access profile email',
-
+        response_types: ['code'], 
+        scope: 'openid profile offline_access'
     }],
     pkce: {
         required: () => false,

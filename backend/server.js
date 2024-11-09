@@ -48,6 +48,8 @@ const authenticateTokenJWKS = async (req, res, next) => {
     try {
         const decodedToken = await verifyTokenWithJWKS(token);
         req.user = decodedToken;
+        console.log({ decodedToken });
+        
         next();
     } catch (error) {
         console.error('Token validation failed:', error.message);
@@ -72,7 +74,7 @@ const exchangeCodeForToken = async (code) => {
         throw error;
     }
 };
-
+ 
 const verifyToken = async (token) => {
     try {
         const response = await axios.get(`${OIDC_ISSUER}/oidc/.well-known/openid-configuration`);
