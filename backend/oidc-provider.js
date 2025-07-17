@@ -9,7 +9,7 @@ oidcApp.use(cors());
 
 const configuration = {
     clients: [{
-        client_id: 'my-random-client-id',
+        client_id: 'test-client-id',
         client_secret: 'my-random-and-very-long-client-secret',
         redirect_uris: [
             'http://localhost:3000/callback',
@@ -79,7 +79,7 @@ const configuration = {
     },
 };
 
-const oidc = new Provider('http://localhost:3001', configuration);
+const oidc = new Provider('http://localhost:4000', configuration);
 
 oidc.on('grant.success', (ctx) => {
     console.log('Grant Success:', ctx.oidc.entities);
