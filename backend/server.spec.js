@@ -3,7 +3,7 @@ import app from './server.js'; // Import your Express app
 import oidcApp from './oidc-provider.js'; // Import your OIDC provider app
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 
-const CLIENT_ID = 'my-random-client-id';
+const CLIENT_ID = 'test-client-id';
 const CLIENT_SECRET = 'my-random-and-very-long-client-secret';
 let expressServer;
 let oidcServer;
@@ -13,11 +13,11 @@ let refreshToken;
 
 describe('OAuth2 E2E Tests', () => {
     beforeAll(() => {
-        expressServer = app.listen(3002, () => {
-            console.log('Express server running on http://localhost:3002');
+        expressServer = app.listen(4002, () => {
+            console.log('Express server running on http://localhost:4002');
         });
-        oidcServer = oidcApp.listen(3001, () => {
-            console.log('OIDC server running on http://localhost:3001');
+        oidcServer = oidcApp.listen(4000, () => {
+            console.log('OIDC server running on http://localhost:4000');
         });
     });
 
@@ -42,7 +42,7 @@ describe('OAuth2 E2E Tests', () => {
             expect(locationHeader).toContain('/interaction/');
 
             // Simulate user interaction (login and consent)
-            const interactionUrl = new URL(locationHeader, `http://localhost:3001`);
+            const interactionUrl = new URL(locationHeader, `http://localhost:4000`);
             const uid = interactionUrl.pathname.split('/').pop();
 
             await request(oidcApp)
@@ -54,7 +54,7 @@ describe('OAuth2 E2E Tests', () => {
                 .post(`/interaction/${uid}/confirm`)
                 .expect(302);
 
-            const callbackUrl = new URL(consentRes.header.location, `http://localhost:3001`);
+            const callbackUrl = new URL(consentRes.header.location, `http://localhost:4000`);
             authorizationCode = callbackUrl.searchParams.get('code');
             expect(authorizationCode).toBeTruthy();
         });

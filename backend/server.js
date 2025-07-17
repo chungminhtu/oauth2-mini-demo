@@ -12,7 +12,7 @@ app.use(cors({
 }));
 
 const OIDC_ISSUER = 'http://localhost:4000';
-const CLIENT_ID = 'my-random-client-id';
+const CLIENT_ID = 'test-client-id';
 const CLIENT_SECRET = 'my-random-and-very-long-client-secret';
 
 const client = jwksClient({
