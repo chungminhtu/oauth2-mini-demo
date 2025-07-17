@@ -14,7 +14,6 @@ app.use(cors({
 const OIDC_ISSUER = 'http://localhost:4000';
 const CLIENT_ID = 'my-random-client-id';
 const CLIENT_SECRET = 'my-random-and-very-long-client-secret';
-const REDIRECT_URI = 'http://localhost:3000/callback';
 
 const client = jwksClient({
     jwksUri: `${OIDC_ISSUER}/oidc/jwks`
@@ -60,10 +59,20 @@ const authenticateTokenJWKS = async (req, res, next) => {
     }
 };
 
-const exchangeCodeForToken = async (code) => {
+const exchangeCodeForToken = async (code, redirect_uri) => {  // Accept redirect_uri parameter
+    // Validate redirect_uri for security
+    const validRedirectUris = [
+        'http://localhost:3000/callback',
+        'http://localhost:3001/callback'
+    ];
+    
+    if (!validRedirectUris.includes(redirect_uri)) {
+        throw new Error('Invalid redirect URI');
+    }
+    
     try {
         const response = await axios.post(`${OIDC_ISSUER}/oidc/token`,
-            `grant_type=authorization_code&code=${code}&redirect_uri=${REDIRECT_URI}&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`,
+            `grant_type=authorization_code&code=${code}&redirect_uri=${redirect_uri}&client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}`,  // Use the passed redirect_uri
             {
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded'
@@ -128,9 +137,10 @@ const authenticateToken = async (req, res, next) => {
 };
 
 app.post('/exchange', async (req, res) => {
-    const { code } = req.body;
+    const { code, redirect_uri } = req.body;  // Accept redirect_uri from frontend
+    
     try {
-        const tokenData = await exchangeCodeForToken(code);
+        const tokenData = await exchangeCodeForToken(code, redirect_uri);
         res.json(tokenData);
     } catch (error) {
         res.status(400).json({ error: 'Failed to exchange code for token' });

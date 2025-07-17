@@ -21,7 +21,10 @@ const App = () => {
 
     const exchangeCodeForToken = async (code) => {
         try {
-            const response = await axios.post('http://localhost:4002/exchange', { code });
+            const response = await axios.post('http://localhost:4002/exchange', { 
+                code,
+                redirect_uri: REDIRECT_URI
+            });
             console.log('Token exchange response:', response.data);
             const { access_token, refresh_token, expires_in, id_token } = response.data;
             setToken(access_token);
