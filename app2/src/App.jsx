@@ -14,13 +14,18 @@ const App = () => {
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
 
-        if (code) {
+        if (code && !token) {  // Only exchange if we don't already have a token
             exchangeCodeForToken(code);
+            // Clear the URL parameters immediately to prevent reuse
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
-    }, []);
+    }, []); // Empty dependency array to run only once
 
     const exchangeCodeForToken = async (code) => {
         try {
+            // Clear the URL immediately to prevent code reuse
+            window.history.replaceState({}, document.title, "/");
+            
             const response = await axios.post('http://localhost:4002/exchange', { 
                 code,
                 redirect_uri: REDIRECT_URI
@@ -36,7 +41,6 @@ const App = () => {
                 localStorage.setItem('refresh_token', refresh_token);
             }
             setTimeout(() => refreshToken(), (expires_in - 300) * 1000);
-            window.history.replaceState({}, document.title, "/");
         } catch (error) {
             console.error('Error exchanging code for token:', error.response?.data || error.message);
         }
