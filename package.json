@@ -5,8 +5,8 @@
   "scripts": {
     "backend": "NODE_ENV=dev nodemon backend/server.js",
     "SSO": "NODE_ENV=dev DEBUG=oidc-provider:* nodemon backend/oidc-provider.js",
-    "frontend": "vite --open",
-    "kill:4002": "lsof -ti:4002 | xargs kill -9"
+    "app1": "vite --open",
+    "app2": "vite --config app2/vite.config.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
