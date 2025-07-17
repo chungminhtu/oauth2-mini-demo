@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_ENDPOINT = 'http://localhost:4002/api/private';
+const API_ENDPOINT = 'http://localhost:4002/api/private/app1';
 const CLIENT_ID = 'test-client-id';
 const REDIRECT_URI = 'http://localhost:3000/callback';
 

@@ -165,12 +165,60 @@ app.post('/refresh', async (req, res) => {
     }
 });
 
-app.get('/api/privateJWKS', authenticateTokenJWKS, (req, res) => {
-    res.json({ message: 'This is private data!', timestamp: new Date().toISOString(), user: req.user });
+app.get('/api/private/app1', authenticateToken, (req, res) => {
+    res.json({ 
+        message: 'This is private data for App 1!', 
+        timestamp: new Date().toISOString(), 
+        user: req.user,
+        appId: 'app1',
+        specialData: {
+            feature: 'Advanced Analytics',
+            permissions: ['read', 'write', 'admin'],
+            customMessage: 'Welcome to App 1 - The Main Dashboard'
+        }
+    });
 });
 
-app.get('/api/private', authenticateToken, (req, res) => {
-    res.json({ message: 'This is private data!', timestamp: new Date().toISOString(), user: req.user });
+app.get('/api/private/app2', authenticateToken, (req, res) => {
+    res.json({ 
+        message: 'This is private data for App 2!', 
+        timestamp: new Date().toISOString(), 
+        user: req.user,
+        appId: 'app2',
+        specialData: {
+            feature: 'Reporting Module',
+            permissions: ['read', 'export'],
+            customMessage: 'Welcome to App 2 - The Reporting Suite'
+        }
+    });
+});
+
+app.get('/api/private/app1/jwks', authenticateTokenJWKS, (req, res) => {
+    res.json({ 
+        message: 'This is private data for App 1 via JWKS!', 
+        timestamp: new Date().toISOString(), 
+        user: req.user,
+        appId: 'app1',
+        specialData: {
+            feature: 'Advanced Analytics',
+            permissions: ['read', 'write', 'admin'],
+            customMessage: 'Welcome to App 1 - The Main Dashboard (JWKS)'
+        }
+    });
+});
+
+app.get('/api/private/app2/jwks', authenticateTokenJWKS, (req, res) => {
+    res.json({ 
+        message: 'This is private data for App 2 via JWKS!', 
+        timestamp: new Date().toISOString(), 
+        user: req.user,
+        appId: 'app2',
+        specialData: {
+            feature: 'Reporting Module',
+            permissions: ['read', 'export'],
+            customMessage: 'Welcome to App 2 - The Reporting Suite (JWKS)'
+        }
+    });
 });
 
 if (process.env.NODE_ENV === 'dev') {
