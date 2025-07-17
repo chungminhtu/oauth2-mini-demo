@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_ENDPOINT = 'http://localhost:3002/api/private';
+const API_ENDPOINT = 'http://localhost:4002/api/private';
 const CLIENT_ID = 'my-random-client-id';
 const REDIRECT_URI = 'http://localhost:3000/callback';
 
@@ -21,7 +21,7 @@ const App = () => {
 
   const exchangeCodeForToken = async (code) => {
     try {
-      const response = await axios.post('http://localhost:3002/exchange', { code });
+      const response = await axios.post('http://localhost:4002/exchange', { code });
       console.log('Token exchange response:', response.data);
       const { access_token, refresh_token, expires_in, id_token } = response.data;
       setToken(access_token);
@@ -43,7 +43,7 @@ const App = () => {
     const refresh_token = localStorage.getItem('refresh_token');
     if (refresh_token) {
       try {
-        const response = await axios.post('http://localhost:3002/refresh', { refresh_token });
+        const response = await axios.post('http://localhost:4002/refresh', { refresh_token });
         console.log('Token refresh response:', response.data);
         const { access_token, refresh_token, expires_in, id_token } = response.data;
         setToken(access_token);
@@ -98,7 +98,7 @@ const App = () => {
       scope: 'openid profile offline_access'
     });
 
-    window.location.href = `http://localhost:3001/oidc/auth?${params.toString()}`;
+    window.location.href = `http://localhost:4000/oidc/auth?${params.toString()}`;
   };
 
   const handleLogout = () => {

@@ -6,9 +6,12 @@ import jwksClient from 'jwks-rsa';
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://localhost:3001'],
+    credentials: true
+}));
 
-const OIDC_ISSUER = 'http://localhost:3001';
+const OIDC_ISSUER = 'http://localhost:4000';
 const CLIENT_ID = 'my-random-client-id';
 const CLIENT_SECRET = 'my-random-and-very-long-client-secret';
 const REDIRECT_URI = 'http://localhost:3000/callback';
@@ -161,8 +164,8 @@ app.get('/api/private', authenticateToken, (req, res) => {
 });
 
 if (process.env.NODE_ENV === 'dev') {
-    app.listen(3002, () => {
-        console.log('Server is running on http://localhost:3002');
+    app.listen(4002, () => {
+        console.log('🖥️  Shared Backend Service is running on http://localhost:4002');
     });
 }
 

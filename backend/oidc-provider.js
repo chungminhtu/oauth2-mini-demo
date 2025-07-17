@@ -11,12 +11,15 @@ const configuration = {
     clients: [{
         client_id: 'my-random-client-id',
         client_secret: 'my-random-and-very-long-client-secret',
-        redirect_uris: ['http://localhost:3000/callback'],
+        redirect_uris: [
+            'http://localhost:3000/callback',
+            'http://localhost:3001/callback'
+        ],
         grant_types: [
             'refresh_token',
             'authorization_code'
         ],
-        response_types: ['code'], 
+        response_types: ['code'],
         scope: 'openid profile offline_access'
     }],
     pkce: {
@@ -152,9 +155,9 @@ oidcApp.use((err, req, res, next) => {
     });
 });
 if (process.env.NODE_ENV === 'dev') {
-    const port = 3001;
+    const port = 4000;
     oidcApp.listen(port, () => {
-        console.log(`OIDC Provider is listening on http://localhost:${port}`);
+        console.log(`🔐 OIDC Provider is listening on http://localhost:${port}`);
     });
 }
 
