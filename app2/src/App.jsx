@@ -60,7 +60,7 @@ const App = () => {
 
     const fetchPrivateData = async (useJwks = false) => {
         try {
-            const endpoint = useJwks ? `${API_ENDPOINT}JWKS` : API_ENDPOINT;
+            const endpoint = useJwks ? `${API_ENDPOINT}jwks` : API_ENDPOINT;
             console.log(`Fetching private data from: ${endpoint}`);
             const response = await axios.get(endpoint, {
                 headers: { Authorization: `Bearer ${useJwks ? idToken : token}` },
@@ -91,7 +91,7 @@ const App = () => {
             client_id: CLIENT_ID,
             redirect_uri: REDIRECT_URI,
             response_type: 'code',
-            scope: 'openid profile email offline_access'
+            scope: 'openid profile offline_access'
         });
 
         window.location.href = `http://localhost:4000/oidc/auth?${params.toString()}`;
@@ -107,107 +107,20 @@ const App = () => {
     };
 
     return (
-        <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-            <h1 style={{ color: '#f5576c' }}>🚀 OAuth 2.0 App 2</h1>
-            <p style={{ color: '#666' }}>Running on localhost:3001</p>
-
+        <div>
+            <h1>OAuth 2.0 Client - App 2</h1>  
             {!token ? (
-                <button
-                    onClick={handleLogin}
-                    style={{
-                        padding: '10px 20px',
-                        backgroundColor: '#f5576c',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '5px',
-                        cursor: 'pointer',
-                        fontSize: '16px'
-                    }}
-                >
-                    🔑 Login with OAuth2
-                </button>
+                <button onClick={handleLogin}>Login</button>
             ) : (
                 <div>
-                    <p style={{ color: '#28a745', fontWeight: 'bold' }}>✅ You are logged in!</p>
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                        <button
-                            onClick={() => fetchPrivateData(false)}
-                            style={{
-                                padding: '8px 16px',
-                                backgroundColor: '#007bff',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            📊 Fetch Data (Introspection)
-                        </button>
-                        <button
-                            onClick={() => fetchPrivateData(true)}
-                            style={{
-                                padding: '8px 16px',
-                                backgroundColor: '#6f42c1',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            🔐 Fetch Data (JWKS)
-                        </button>
-                        <button
-                            onClick={() => refreshToken()}
-                            style={{
-                                padding: '8px 16px',
-                                backgroundColor: '#28a745',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            🔄 Refresh Token
-                        </button>
-                        <button
-                            onClick={fetchPrivateDataWithFakeToken}
-                            style={{
-                                padding: '8px 16px',
-                                backgroundColor: '#dc3545',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            🚨 Test Fake Token
-                        </button>
-                        <button
-                            onClick={handleLogout}
-                            style={{
-                                padding: '8px 16px',
-                                backgroundColor: '#6c757d',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            🚪 Logout
-                        </button>
-                    </div>
+                    <p>You are logged in!</p>
+                    <button onClick={() => fetchPrivateData(false)}>Fetch Private Data via Introspection</button>
+                    <button onClick={() => fetchPrivateData(true)}>Fetch Private Data via JWKS</button>
+                    <button onClick={() => refreshToken()}>Refresh new token</button>
+                    <button onClick={fetchPrivateDataWithFakeToken}>Test with Fake Token</button>
+                    <button onClick={handleLogout}>Logout</button>
                     {privateData && (
-                        <div style={{
-                            backgroundColor: '#f8f9fa',
-                            padding: '15px',
-                            borderRadius: '5px',
-                            border: '1px solid #dee2e6'
-                        }}>
-                            <h3>📋 API Response:</h3>
-                            <pre style={{ fontSize: '12px', overflow: 'auto' }}>
-                                {JSON.stringify(privateData, null, 2)}
-                            </pre>
-                        </div>
+                        <pre>{JSON.stringify(privateData, null, 2)}</pre>
                     )}
                 </div>
             )}

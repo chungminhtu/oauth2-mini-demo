@@ -86,10 +86,6 @@ const App = () => {
     }
   };
 
-  // const handleLogin = () => {
-  //   const encodedRedirectUri = encodeURIComponent(REDIRECT_URI);
-  //   window.location.href = `http://localhost:3001/oidc/auth?client_id=${CLIENT_ID}&redirect_uri=${encodedRedirectUri}&response_type=code&scope=offline_access openid profile`;
-  // };
   const handleLogin = () => {
     const params = new URLSearchParams({
       client_id: CLIENT_ID,
