@@ -91,54 +91,25 @@ app.get('/saml/sso/initiate', (req, res) => {
     }
 });
 
-// SAML Assertion Consumer Service (ACS)
-app.post('/saml/acs', (req, res) => {
+app.post('/saml/acs', async (req, res) => {
     const { SAMLResponse, RelayState } = req.body;
+    let relayState = {};
+    try {
+        relayState = JSON.parse(decodeURIComponent(RelayState || '{}'));
+    } catch { /* ignore */ }
 
     try {
-        let relayState = {};
-        try {
-            relayState = JSON.parse(decodeURIComponent(RelayState || '{}'));
-        } catch (e) {
-            console.warn('Could not parse RelayState:', RelayState);
-            relayState = { appName: 'app3', returnUrl: 'http://localhost:3002' };
-        }
+        const { extract } = await sp.parseLoginResponse(idp, 'post', { body: req.body });
 
-        console.log('📨 Received SAML Response, RelayState:', relayState);
-
-        // Parse and validate SAML response
-        const { extract } = sp.parseLoginResponse(idp, 'post', { body: req.body });
-
-        console.log('✅ SAML Response validated successfully');
-        console.log('👤 SAML Subject:', extract.nameID);
-        console.log('📋 SAML Attributes:', extract.attributes);
-
-        // Store SAML assertion in session
-        req.session.samlAssertion = {
-            subject: extract.nameID,
-            attributes: extract.attributes,
-            sessionIndex: extract.sessionIndex,
-            issuer: extract.issuer,
-            audience: extract.audience,
-            notBefore: extract.conditions?.notBefore,
-            notOnOrAfter: extract.conditions?.notOnOrAfter,
-            authnStatement: extract.authnStatement
-        };
-
+        console.log('✅ SAML Response validated. Subject:', extract.nameID);
         req.session.authenticated = true;
-        req.session.authMethod = 'saml';
+        req.session.samlAssertion = extract;          // store everything
 
-        console.log('💾 Stored SAML assertion in session');
-
-        // Redirect back to the original app
-        const returnUrl = relayState.returnUrl || `http://localhost:${relayState.appName === 'app4' ? '3003' : '3002'}`;
-
-        console.log('🔄 Redirecting back to:', returnUrl);
-        res.redirect(returnUrl);
-
-    } catch (error) {
-        console.error('❌ SAML Response validation failed:', error);
-        res.status(400).json({ error: 'Invalid SAML response', details: error.message });
+        const returnUrl = relayState.returnUrl || 'http://localhost:3002';
+        return res.redirect(returnUrl);
+    } catch (err) {
+        console.error('❌ parseLoginResponse error:', err);
+        return res.status(400).json({ error: 'Invalid SAML response', details: err.message });
     }
 });
 
