@@ -1,11 +1,7 @@
 import express from 'express';
-import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
 import get from 'axios';
-import urlencoded from 'body-parser';
-import json from 'body-parser';
-import cors from 'cors';
 
 // ATTRIBUTE MAPPING (from your working code)
 const INVERSE_ATTRIBUTE_MAP = {
@@ -20,24 +16,11 @@ const INVERSE_ATTRIBUTE_MAP = {
     'urn:oid:2.5.4.12': 'title'
 };
 
-const app = express();
-
-app.use(urlencoded({ extended: true }));
-app.use(json());
-app.use(cors({
-    origin: ['http://localhost:3002', 'http://localhost:3003'],
-    credentials: true
-}));
-
-app.use(cookieSession({
-    name: 'session',
-    keys: ['my-favorite-secret'],
-    maxAge: 8 * 60 * 60 * 1000
-}));
+const app = express(); 
 
 setSchemaValidator(validator);
 
-const URI_IDP_METADATA = 'http://localhost:4001/saml/metadata';
+const URI_IDP_METADATA = 'http://localhost:4002/saml/metadata';
 
 get(URI_IDP_METADATA).then(response => {
     const idp = IdentityProvider({
@@ -46,7 +29,7 @@ get(URI_IDP_METADATA).then(response => {
     });
 
     const sp = ServiceProvider({
-        entityID: 'http://localhost:4003/saml/metadata',
+        entityID: 'http://localhost:4001/saml/metadata',
         authnRequestsSigned: false,
         wantAssertionsSigned: false,
         wantMessageSigned: false,
@@ -54,12 +37,11 @@ get(URI_IDP_METADATA).then(response => {
         wantLogoutRequestSigned: false,
         assertionConsumerService: [{
             Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-            Location: 'http://localhost:4003/saml/acs',
+            Location: 'http://localhost:4001/saml/acs',
         }],
         nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress']
     });
 
-    // ACS endpoint (exactly from your working code)
     app.post('/saml/acs', async (req, res) => {
         console.log('Received /saml/acs post request...');
         const relayState = req.body.RelayState;
@@ -85,10 +67,10 @@ get(URI_IDP_METADATA).then(response => {
 
             console.log('SAML attributes:', JSON.stringify(attributes));
 
-            let returnUrl = 'http://localhost:3002';
+            let returnUrl = 'http://localhost:4004';
             try {
                 const relayData = JSON.parse(relayState);
-                returnUrl = relayData.returnUrl || (relayData.app === 'app4' ? 'http://localhost:3003' : 'http://localhost:3002');
+                returnUrl = relayData.returnUrl || (relayData.app === 'app4' ? 'http://localhost:4003' : 'http://localhost:4004');
             } catch (e) {
                 console.log('Using default return URL');
             }
@@ -167,8 +149,8 @@ get(URI_IDP_METADATA).then(response => {
         });
     });
 
-    app.listen(4003, () => {
-        console.log('🔐 SAML Service Provider running on http://localhost:4003');
+    app.listen(4001, () => {
+        console.log('🔐 SAML Service Provider running on http://localhost:4001');
     });
 
 }).catch(error => {

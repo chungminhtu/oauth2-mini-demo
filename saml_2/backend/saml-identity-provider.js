@@ -1,21 +1,9 @@
 import express from 'express';
-import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
-import urlencoded from 'body-parser';
-import json from 'body-parser';
 import { v4 as uuidv4 } from 'uuid';
 
 const app = express();
-
-app.use(urlencoded({ extended: true }));
-app.use(json());
-
-app.use(cookieSession({
-  name: 'idp_session',
-  keys: ['idp-secret-key'],
-  maxAge: 24 * 60 * 60 * 1000
-}));
 
 setSchemaValidator(validator);
 
@@ -30,38 +18,28 @@ const users = {
     uid: 'john',
     mail: 'john@example.com',
     title: 'Senior Developer'
-  },
-  'jane@example.com': {
-    password: 'password123',
-    givenName: 'Jane',
-    sn: 'Smith',
-    email: 'jane@example.com',
-    cn: 'Jane Smith',
-    uid: 'jane',
-    mail: 'jane@example.com',
-    title: 'Marketing Manager'
   }
 };
 
 // Identity Provider configuration
 const idp = IdentityProvider({
-  entityID: 'http://localhost:4001/saml/metadata',
+  entityID: 'http://localhost:4002/saml/metadata',
   wantAuthnRequestsSigned: false,
   nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
   singleSignOnService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
-    Location: 'http://localhost:4001/saml/sso'
+    Location: 'http://localhost:4002/saml/sso'
   }]
 });
 
 // Service Provider configuration (for parsing requests)
 const sp = ServiceProvider({
-  entityID: 'http://localhost:4003/saml/metadata',
+  entityID: 'http://localhost:4001/saml/metadata',
   authnRequestsSigned: false,
   wantAssertionsSigned: false,
   assertionConsumerService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-    Location: 'http://localhost:4003/saml/acs'
+    Location: 'http://localhost:4001/saml/acs'
   }]
 });
 
@@ -211,7 +189,7 @@ const generateAndSendSAMLResponse = (user, requestId, res) => {
   }
 };
 
-app.listen(4001, () => {
-  console.log('🔐 SAML Identity Provider running on http://localhost:4001');
+app.listen(4002, () => {
+  console.log('🔐 SAML Identity Provider running on http://localhost:4002');
   console.log('📋 Demo users: john@example.com, jane@example.com (password: password123)');
 });

@@ -5,7 +5,7 @@ export default defineConfig({
     plugins: [react()],
     root: './saml_2/app3',
     server: {
-        port: 3002,
+        port: 4003,
         open: true
     },
     base: './',

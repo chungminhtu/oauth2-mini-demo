@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_ENDPOINT = 'http://localhost:4003/api/protected/app3';
-const SAML_BACKEND = 'http://localhost:4003';
+const API_ENDPOINT = 'http://localhost:4001/api/protected/app3';
+const SAML_BACKEND = 'http://localhost:4001';
 
 const App = () => {
   const [authenticated, setAuthenticated] = useState(false);
