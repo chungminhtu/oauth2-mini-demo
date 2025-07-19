@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const SAML_BACKEND = 'http://localhost:4003';
-const APP_NAME = 'app2'; // Changed from app1 to app2
+const APP_NAME = 'app4'; // Changed from app1 to app2
 
 const App = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -82,7 +82,7 @@ const App = () => {
 
   return (
     <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>🔐 SAML 2.0 Client - App 2</h1>  {/* Changed from App 1 to App 2 */}
+      <h1>🔐 SAML 2.0 Client - App 4</h1>  {/* Changed from App 1 to App 2 */}
       {!isAuthenticated ? (
         <div>
           <p>Please authenticate with SAML Identity Provider</p>

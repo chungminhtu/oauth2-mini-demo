@@ -42,7 +42,7 @@ const sp = ServiceProvider({
     }]
 });
 
-// SAML Identity Provider Configuration (for SP to know about IdP)
+// SAML Identity Provider Configuration
 const idp = IdentityProvider({
     entityID: 'http://localhost:4001/saml/metadata',
     wantAuthnRequestsSigned: false,
@@ -65,6 +65,9 @@ app.get('/saml/metadata', (req, res) => {
 app.get('/saml/sso/initiate', (req, res) => {
     const { app: appName, returnUrl } = req.query;
 
+    console.log('🚀 Initiating SAML SSO for:', appName);
+    console.log('📍 Return URL:', returnUrl);
+
     // Store app context and return URL in session
     req.session.appContext = { appName, returnUrl };
 
@@ -74,16 +77,17 @@ app.get('/saml/sso/initiate', (req, res) => {
         // Store request ID for validation
         req.session.samlRequestId = id;
 
-        console.log('🚀 Initiating SAML SSO for:', appName);
         console.log('📝 SAML Request ID:', id);
 
         // Redirect to IdP with SAML Request
-        const ssoUrl = `${idp.singleSignOnService[0].Location}?SAMLRequest=${encodeURIComponent(requestXML)}&RelayState=${encodeURIComponent(JSON.stringify({ appName, returnUrl }))}`;
+        const ssoUrl = `http://localhost:4001/saml/sso?SAMLRequest=${encodeURIComponent(requestXML)}&RelayState=${encodeURIComponent(JSON.stringify({ appName, returnUrl }))}`;
 
+        console.log('🔗 Redirecting to:', ssoUrl.substring(0, 100) + '...');
         res.redirect(ssoUrl);
+
     } catch (error) {
         console.error('❌ Error creating SAML login request:', error);
-        res.status(500).json({ error: 'Failed to initiate SAML SSO' });
+        res.status(500).json({ error: 'Failed to initiate SAML SSO', details: error.message });
     }
 });
 
@@ -92,19 +96,26 @@ app.post('/saml/acs', (req, res) => {
     const { SAMLResponse, RelayState } = req.body;
 
     try {
-        const relayState = JSON.parse(decodeURIComponent(RelayState || '{}'));
+        let relayState = {};
+        try {
+            relayState = JSON.parse(decodeURIComponent(RelayState || '{}'));
+        } catch (e) {
+            console.warn('Could not parse RelayState:', RelayState);
+            relayState = { appName: 'app3', returnUrl: 'http://localhost:3002' };
+        }
+
         console.log('📨 Received SAML Response, RelayState:', relayState);
 
         // Parse and validate SAML response
         const { extract } = sp.parseLoginResponse(idp, 'post', { body: req.body });
 
         console.log('✅ SAML Response validated successfully');
-        console.log('👤 SAML Subject:', extract.subject);
+        console.log('👤 SAML Subject:', extract.nameID);
         console.log('📋 SAML Attributes:', extract.attributes);
 
         // Store SAML assertion in session
         req.session.samlAssertion = {
-            subject: extract.subject,
+            subject: extract.nameID,
             attributes: extract.attributes,
             sessionIndex: extract.sessionIndex,
             issuer: extract.issuer,
@@ -115,9 +126,14 @@ app.post('/saml/acs', (req, res) => {
         };
 
         req.session.authenticated = true;
+        req.session.authMethod = 'saml';
+
+        console.log('💾 Stored SAML assertion in session');
 
         // Redirect back to the original app
-        const returnUrl = relayState.returnUrl || `http://localhost:${relayState.appName === 'app2' ? '3003' : '3002'}`;
+        const returnUrl = relayState.returnUrl || `http://localhost:${relayState.appName === 'app4' ? '3003' : '3002'}`;
+
+        console.log('🔄 Redirecting back to:', returnUrl);
         res.redirect(returnUrl);
 
     } catch (error) {
@@ -139,6 +155,7 @@ app.get('/saml/session/status', (req, res) => {
 
         res.json({
             authenticated: true,
+            authMethod: 'saml',
             assertion: req.session.samlAssertion
         });
     } else {
@@ -169,34 +186,52 @@ const requireSAMLAuth = (req, res, next) => {
     next();
 };
 
-// Protected endpoints
-app.get('/api/protected/app1', requireSAMLAuth, (req, res) => {
+// Protected endpoints for App 3 and App 4
+app.get('/api/protected/app3', requireSAMLAuth, (req, res) => {
     res.json({
-        message: 'This is protected data for SAML App 1!',
+        message: 'This is protected data for SAML App 3!',
         timestamp: new Date().toISOString(),
-        samlSubject: req.samlUser.subject,
-        samlAttributes: req.samlUser.attributes,
-        appId: 'saml-app1',
+        samlUser: req.session.samlAssertion,
+        appId: 'app3',
+        authMethod: 'saml',
         specialData: {
-            feature: 'SAML Advanced Analytics',
-            permissions: ['read', 'write', 'admin'],
-            customMessage: 'Welcome to SAML App 1 - The Main Dashboard'
+            feature: 'SAML Analytics Dashboard',
+            permissions: ['read', 'write', 'saml-admin'],
+            customMessage: 'Welcome to SAML App 3 - Advanced Analytics'
         }
     });
 });
 
-app.get('/api/protected/app2', requireSAMLAuth, (req, res) => {
+app.get('/api/protected/app4', requireSAMLAuth, (req, res) => {
     res.json({
-        message: 'This is protected data for SAML App 2!',
+        message: 'This is protected data for SAML App 4!',
         timestamp: new Date().toISOString(),
-        samlSubject: req.samlUser.subject,
-        samlAttributes: req.samlUser.attributes,
-        appId: 'saml-app2',
+        samlUser: req.session.samlAssertion,
+        appId: 'app4',
+        authMethod: 'saml',
         specialData: {
-            feature: 'SAML Reporting Module',
-            permissions: ['read', 'export'],
-            customMessage: 'Welcome to SAML App 2 - The Reporting Suite'
+            feature: 'SAML Reporting Suite',
+            permissions: ['read', 'export', 'saml-reports'],
+            customMessage: 'Welcome to SAML App 4 - Enterprise Reporting'
         }
+    });
+});
+
+// Test endpoint with fake token (for testing)
+app.get('/api/protected/test', (req, res) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token === 'fake-saml-token') {
+        return res.status(401).json({
+            error: 'Invalid token',
+            message: 'As expected, fake token was rejected'
+        });
+    }
+
+    res.status(401).json({
+        error: 'No valid authentication',
+        message: 'Please use SAML authentication'
     });
 });
 
@@ -218,7 +253,7 @@ app.post('/saml/slo/initiate', requireSAMLAuth, (req, res) => {
         });
 
         // Redirect to IdP for global logout
-        const sloUrl = `${idp.singleLogoutService[0].Location}?SAMLRequest=${encodeURIComponent(logoutRequestXML)}`;
+        const sloUrl = `http://localhost:4001/saml/slo?SAMLRequest=${encodeURIComponent(logoutRequestXML)}`;
 
         res.json({
             success: true,
@@ -248,11 +283,35 @@ app.get('/saml/sls', (req, res) => {
     <body>
       <h2>🚪 SAML Single Logout Complete</h2>
       <p class="success">✅ You have been successfully logged out from all SAML sessions.</p>
-      <a href="http://localhost:3002">Return to App 1</a> | 
-      <a href="http://localhost:3003">Return to App 2</a>
+      <a href="http://localhost:3002">Return to App 3</a> | 
+      <a href="http://localhost:3003">Return to App 4</a>
     </body>
     </html>
   `);
+});
+
+// Simple logout endpoint (destroy local session only)
+app.post('/saml/logout', (req, res) => {
+    req.session.destroy((err) => {
+        if (err) {
+            console.error('Error destroying session:', err);
+            return res.status(500).json({ error: 'Failed to logout' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Local session destroyed successfully'
+        });
+    });
+});
+
+// Health check
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'healthy',
+        service: 'SAML Service Provider',
+        timestamp: new Date().toISOString()
+    });
 });
 
 // Error handling
@@ -271,9 +330,10 @@ if (process.env.NODE_ENV === 'dev') {
         console.log('   - Metadata: http://localhost:4003/saml/metadata');
         console.log('   - SSO Initiate: http://localhost:4003/saml/sso/initiate');
         console.log('   - Session Status: http://localhost:4003/saml/session/status');
-        console.log('   - Protected App1: http://localhost:4003/api/protected/app1');
-        console.log('   - Protected App2: http://localhost:4003/api/protected/app2');
+        console.log('   - Protected App3: http://localhost:4003/api/protected/app3');
+        console.log('   - Protected App4: http://localhost:4003/api/protected/app4');
     });
 }
 
 export default app;
+

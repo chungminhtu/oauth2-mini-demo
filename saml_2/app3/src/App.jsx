@@ -1,65 +1,62 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_ENDPOINT = 'http://localhost:4003/api/protected/app1';
-const SERVICE_PROVIDER_URL = 'http://localhost:4003';
+const SAML_BACKEND = 'http://localhost:4003';
+const APP_NAME = 'app3'; // Changed from app1 to app3
 
 const App = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [samlAssertion, setSamlAssertion] = useState(null);
-  const [protectedData, setProtectedData] = useState(null);
+  const [samlSession, setSamlSession] = useState(null);
+  const [privateData, setPrivateData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    checkSAMLSession();
+    checkSamlSession();
   }, []);
 
-  const checkSAMLSession = async () => {
+  const checkSamlSession = async () => {
     try {
-      const response = await axios.get(`${SERVICE_PROVIDER_URL}/saml/session/status`, {
+      const response = await axios.get(`${SAML_BACKEND}/saml/session/status`, {
         withCredentials: true
       });
+      
       if (response.data.authenticated) {
-        setIsAuthenticated(true);
-        setSamlAssertion(response.data.assertion);
+        setSamlSession(response.data.assertion);
       }
     } catch (error) {
-      console.error('Error checking SAML session status:', error);
-      setIsAuthenticated(false);
+      console.log('No SAML session found');
     } finally {
       setLoading(false);
     }
   };
 
-  const initiateSAMLSSO = () => {
-    window.location.href = `${SERVICE_PROVIDER_URL}/saml/sso/initiate?app=app1&returnUrl=${encodeURIComponent(window.location.href)}`;
+  const handleSamlLogin = () => {
+    const returnUrl = window.location.origin;
+    window.location.href = `${SAML_BACKEND}/saml/sso/initiate?app=${APP_NAME}&returnUrl=${encodeURIComponent(returnUrl)}`;
   };
 
   const initiateSAMLSLO = async () => {
     try {
-      await axios.post(`${SERVICE_PROVIDER_URL}/saml/slo/initiate`, {}, {
+      await axios.post(`${SAML_BACKEND}/saml/slo/initiate`, {}, {
         withCredentials: true
       });
-      setIsAuthenticated(false);
-      setSamlAssertion(null);
-      setProtectedData(null);
+      setSamlSession(null);
+      setPrivateData(null);
     } catch (error) {
       console.error('Error during SAML Single Logout:', error);
     }
   };
 
-  const fetchProtectedDataWithAssertion = async () => {
+  const fetchPrivateData = async () => {
     try {
-      console.log(`Fetching protected data from: ${API_ENDPOINT}`);
-      const response = await axios.get(API_ENDPOINT, {
+      const response = await axios.get(`${SAML_BACKEND}/api/protected/${APP_NAME}`, {
         withCredentials: true
       });
-      setProtectedData(response.data);
+      setPrivateData(response.data);
     } catch (error) {
-      console.error('Error fetching protected data:', error.response?.data || error.message);
+      console.error('Error fetching private data:', error.response?.data || error.message);
       if (error.response && error.response.status === 401) {
-        alert('Your SAML session has expired. Please authenticate again.');
-        setIsAuthenticated(false);
+        alert('Your SAML session has expired. Please log in again.');
+        setSamlSession(null);
       }
     }
   };
@@ -81,29 +78,29 @@ const App = () => {
   }
 
   return (
-    <div>
-      <h1>SAML 2.0 Service Provider - App 1</h1>
-      {!isAuthenticated ? (
+    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
+      <h1>🔐 SAML 2.0 Client - App 3</h1>
+      {!samlSession ? (
         <div>
           <p>Please authenticate with SAML Identity Provider</p>
-          <button onClick={initiateSAMLSSO}>Initiate SAML SSO</button>
+          <button onClick={handleSamlLogin}>Initiate SAML SSO</button>
         </div>
       ) : (
         <div>
           <p>✅ SAML Authentication Successful!</p>
-          {samlAssertion && (
+          {samlSession && (
             <div>
               <h3>SAML Assertion Details:</h3>
-              <pre>{JSON.stringify(samlAssertion, null, 2)}</pre>
+              <pre>{JSON.stringify(samlSession, null, 2)}</pre>
             </div>
           )}
-          <button onClick={fetchProtectedDataWithAssertion}>Access Protected Resource</button>
+          <button onClick={fetchPrivateData}>Access Protected Resource</button>
           <button onClick={testWithInvalidSession}>Test with Invalid Session</button>
           <button onClick={initiateSAMLSLO}>SAML Single Logout</button>
-          {protectedData && (
+          {privateData && (
             <div>
               <h3>Protected Resource Data:</h3>
-              <pre>{JSON.stringify(protectedData, null, 2)}</pre>
+              <pre>{JSON.stringify(privateData, null, 2)}</pre>
             </div>
           )}
         </div>

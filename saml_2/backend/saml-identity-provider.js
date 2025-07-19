@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
-import { IdentityProvider } from 'samlify';
+import { IdentityProvider, ServiceProvider } from 'samlify';
 import { v4 as uuidv4 } from 'uuid';
 
 const app = express();
@@ -46,9 +46,8 @@ const users = {
 // SAML Identity Provider Configuration
 const idp = IdentityProvider({
   entityID: 'http://localhost:4001/saml/metadata',
-  authnRequestsSigned: false,
   wantAuthnRequestsSigned: false,
-  messageSigningOrder: 'encrypt-then-sign',
+  nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
   singleSignOnService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
     Location: 'http://localhost:4001/saml/sso'
@@ -56,20 +55,19 @@ const idp = IdentityProvider({
   singleLogoutService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
     Location: 'http://localhost:4001/saml/slo'
-  }],
-  nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
-  signingCert: '', // In production, add proper certificates
-  encryptionCert: ''
+  }]
 });
 
-// Service Provider Configuration (for IdP to know about SP)
-const sp = {
+// Service Provider Configuration (for parsing requests)
+const sp = ServiceProvider({
   entityID: 'http://localhost:4003/saml/metadata',
+  authnRequestsSigned: false,
+  wantAssertionsSigned: false,
   assertionConsumerService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
     Location: 'http://localhost:4003/saml/acs'
   }]
-};
+});
 
 // Store for SAML requests and sessions
 const samlRequestStore = new Map();
@@ -95,16 +93,27 @@ app.get('/saml/sso', (req, res) => {
     const { extract } = idp.parseLoginRequest(sp, 'redirect', { query: req.query });
 
     console.log('🔍 Parsed SAML AuthnRequest');
-    console.log('📝 Request ID:', extract.request.id);
-    console.log('🏢 Issuer:', extract.request.issuer);
-    console.log('📍 ACS URL:', extract.request.assertionConsumerServiceURL);
+    console.log('📝 Full extract:', extract);
+
+    // Handle different possible structures from samlify
+    const requestId = extract.authnRequest?.id || extract.request?.id || extract.id || `_${uuidv4()}`;
+    const issuer = extract.authnRequest?.issuer || extract.request?.issuer || extract.issuer || 'http://localhost:4003/saml/metadata';
+    const acsUrl = extract.authnRequest?.assertionConsumerServiceURL ||
+      extract.request?.assertionConsumerServiceURL ||
+      extract.assertionConsumerServiceURL ||
+      'http://localhost:4003/saml/acs';
+
+    console.log('📝 Request ID:', requestId);
+    console.log('🏢 Issuer:', issuer);
+    console.log('📍 ACS URL:', acsUrl);
 
     // Store SAML request context
-    const requestId = extract.request.id;
     samlRequestStore.set(requestId, {
-      request: extract.request,
+      extract: extract,
       relayState: RelayState,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      acsUrl: acsUrl,
+      issuer: issuer
     });
 
     // Check if user is already authenticated
@@ -133,9 +142,9 @@ app.get('/saml/sso', (req, res) => {
       <body>
         <h2>🔐 SAML Identity Provider</h2>
         <div class="info">
-          <strong>Service Provider:</strong> ${extract.request.issuer}<br>
+          <strong>Service Provider:</strong> ${issuer}<br>
           <strong>Authentication Request ID:</strong> ${requestId}<br>
-          <strong>ACS URL:</strong> ${extract.request.assertionConsumerServiceURL}
+          <strong>ACS URL:</strong> ${acsUrl}
         </div>
         
         <form method="post" action="/saml/authenticate">
@@ -184,7 +193,7 @@ app.post('/saml/authenticate', (req, res) => {
       <html><body>
         <h2>❌ Authentication Failed</h2>
         <p>Invalid username or password.</p>
-        <a href="/saml/sso?SAMLRequest=${req.query.SAMLRequest}&RelayState=${relayState}">Try Again</a>
+        <a href="javascript:history.back()">Try Again</a>
       </body></html>
     `);
   }
@@ -220,8 +229,8 @@ const generateAndSendSAMLResponse = (user, requestId, res, sessionIndex = null) 
     // Generate session index if not provided
     const currentSessionIndex = sessionIndex || uuidv4();
 
-    // Create user info for SAML response
-    const userInfo = {
+    // Create user attributes for SAML response
+    const userAttributes = {
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
@@ -232,22 +241,12 @@ const generateAndSendSAMLResponse = (user, requestId, res, sessionIndex = null) 
     // Generate SAML Response using samlify
     const { id, context: samlResponse } = idp.createLoginResponse(
       sp,
-      requestContext.request,
+      requestContext.extract,
       'post',
       user.email, // Subject/NameID
-      {
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        department: user.department,
-        role: user.role
-      }, // Attributes
+      userAttributes, // Attributes
       false, // Not encrypted
-      requestContext.relayState,
-      {
-        sessionIndex: currentSessionIndex,
-        authnContextClassRef: 'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
-      }
+      requestContext.relayState
     );
 
     // Clean up request store
@@ -264,7 +263,7 @@ const generateAndSendSAMLResponse = (user, requestId, res, sessionIndex = null) 
         <title>SAML Response</title>
       </head>
       <body onload="document.forms[0].submit()">
-        <form method="post" action="${requestContext.request.assertionConsumerServiceURL}">
+        <form method="post" action="${requestContext.acsUrl}">
           <input type="hidden" name="SAMLResponse" value="${samlResponse}">
           <input type="hidden" name="RelayState" value="${requestContext.relayState || ''}">
           <p>🔄 Redirecting back to Service Provider...</p>
@@ -274,7 +273,7 @@ const generateAndSendSAMLResponse = (user, requestId, res, sessionIndex = null) 
       </html>
     `);
 
-    console.log(`✅ SAML Response sent to SP: ${requestContext.request.assertionConsumerServiceURL}`);
+    console.log(`✅ SAML Response sent to SP: ${requestContext.acsUrl}`);
 
   } catch (error) {
     console.error('❌ Error generating SAML Response:', error);
@@ -284,101 +283,21 @@ const generateAndSendSAMLResponse = (user, requestId, res, sessionIndex = null) 
 
 // SAML Single Logout endpoint
 app.get('/saml/slo', (req, res) => {
-  const { SAMLRequest, RelayState } = req.query;
-
   console.log('🚪 Received SAML Logout Request');
 
-  try {
-    if (SAMLRequest) {
-      // Parse logout request
-      const { extract } = idp.parseLogoutRequest(sp, 'redirect', { query: req.query });
-
-      console.log('👤 Logout request for:', extract.request.nameID);
-      console.log('🗝️ Session Index:', extract.request.sessionIndex);
-
-      // Find and destroy the session
-      const sessionIndex = extract.request.sessionIndex;
-      if (activeSessions.has(sessionIndex)) {
-        activeSessions.delete(sessionIndex);
-        console.log('✅ Session destroyed');
-      }
-
-      // Destroy current session
-      req.session.destroy();
-
-      // Generate logout response
-      const { context: logoutResponse } = idp.createLogoutResponse(
-        sp,
-        extract.request,
-        'redirect',
-        RelayState
-      );
-
-      console.log('📤 Sending SAML Logout Response');
-
-      // Redirect back to SP with logout response
-      const sloUrl = `${sp.assertionConsumerService[0].Location.replace('/acs', '/sls')}?SAMLResponse=${encodeURIComponent(logoutResponse)}&RelayState=${encodeURIComponent(RelayState || '')}`;
-
-      res.redirect(sloUrl);
-    } else {
-      // Direct logout without SAML request
-      req.session.destroy();
-      res.send(`
-        <html><body>
-          <h2>🚪 Logout Complete</h2>
-          <p>✅ You have been logged out successfully.</p>
-        </body></html>
-      `);
-    }
-  } catch (error) {
-    console.error('❌ Error processing SAML Logout Request:', error);
-    res.status(500).json({ error: 'Failed to process SAML logout request', details: error.message });
-  }
-});
-
-// Get active sessions (for debugging)
-app.get('/saml/sessions', (req, res) => {
-  const sessions = Array.from(activeSessions.entries()).map(([sessionIndex, data]) => ({
-    sessionIndex,
-    user: data.user.email,
-    loginTime: data.loginTime
-  }));
-
-  res.json({
-    totalSessions: sessions.length,
-    sessions: sessions
-  });
-});
-
-// User info endpoint (protected)
-app.get('/saml/userinfo', (req, res) => {
-  if (!req.session.authenticatedUser) {
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
-
-  const { password, ...userInfo } = req.session.authenticatedUser;
-  res.json({
-    authenticated: true,
-    user: userInfo,
-    sessionId: req.session.id
-  });
-});
-
-// Logout endpoint
-app.post('/saml/logout', (req, res) => {
-  if (req.session.authenticatedUser) {
-    console.log(`🚪 Logging out user: ${req.session.authenticatedUser.email}`);
-  }
   req.session.destroy((err) => {
     if (err) {
       console.error('Error destroying session:', err);
-      return res.status(500).json({ error: 'Failed to logout' });
     }
 
-    res.json({
-      success: true,
-      message: 'Logged out successfully'
-    });
+    res.send(`
+      <html><body>
+        <h2>🚪 Logout Complete</h2>
+        <p>✅ You have been logged out successfully.</p>
+        <a href="http://localhost:3002">Return to App 3</a> | 
+        <a href="http://localhost:3003">Return to App 4</a>
+      </body></html>
+    `);
   });
 });
 
@@ -401,24 +320,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Clean up expired sessions periodically
-setInterval(() => {
-  const now = Date.now();
-  const expiredSessions = [];
-
-  for (const [sessionIndex, data] of activeSessions.entries()) {
-    // Remove sessions older than 24 hours
-    if (now - data.loginTime.getTime() > 24 * 60 * 60 * 1000) {
-      expiredSessions.push(sessionIndex);
-    }
-  }
-
-  expiredSessions.forEach(sessionIndex => {
-    activeSessions.delete(sessionIndex);
-    console.log(`🗑️ Cleaned up expired session: ${sessionIndex}`);
-  });
-}, 60 * 60 * 1000); // Run every hour
-
 if (process.env.NODE_ENV === 'dev') {
   app.listen(4001, () => {
     console.log('🔐 SAML Identity Provider is running on http://localhost:4001');
@@ -426,8 +327,6 @@ if (process.env.NODE_ENV === 'dev') {
     console.log('   - Metadata: http://localhost:4001/saml/metadata');
     console.log('   - SSO: http://localhost:4001/saml/sso');
     console.log('   - SLO: http://localhost:4001/saml/slo');
-    console.log('   - User Info: http://localhost:4001/saml/userinfo');
-    console.log('   - Sessions: http://localhost:4001/saml/sessions');
     console.log('   - Health: http://localhost:4001/health');
   });
 }
