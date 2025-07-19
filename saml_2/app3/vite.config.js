@@ -3,12 +3,10 @@ import react from '@vitejs/plugin-react-swc'
 
 export default defineConfig({
     plugins: [react()],
-    root: './app2',
+    root: './saml_2/app3',
     server: {
-        port: 3003,
+        port: 3002,
         open: true
     },
-    build: {
-        outDir: '../dist-app2'
-    }
+    base: './',
 })

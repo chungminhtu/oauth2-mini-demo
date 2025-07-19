@@ -9,8 +9,8 @@
     "saml-idp": "NODE_ENV=dev nodemon saml_2/backend/saml-identity-provider.js",
     "app1": "vite --open",
     "app2": "vite --config app2/vite.config.js",
-    "app3": "vite --config saml_2/vite.config.js",
-    "app4": "vite --config saml_2/app2/vite.config.js"
+    "app3": "vite --config saml_2/app3/vite.config.js",
+    "app4": "vite --config saml_2/app4/vite.config.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
