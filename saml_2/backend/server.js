@@ -1,9 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
-import crypto from 'crypto';
-import { URLSearchParams } from 'url';
-import axios from 'axios';
+import { ServiceProvider } from 'samlify';
 
 const app = express();
 
@@ -14,366 +12,270 @@ app.use(cors({
     credentials: true
 }));
 
-// Session configuration for SAML sessions
 app.use(session({
-  name: 'saml_session',
-  secret: 'saml-service-provider-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: false, // Set to true in production with HTTPS
-    httpOnly: true,
-    maxAge: 8 * 60 * 60 * 1000 // 8 hours (typical SAML session duration)
-  }
+    name: 'saml_session',
+    secret: 'saml-service-provider-secret-key',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: false,
+        httpOnly: true,
+        maxAge: 8 * 60 * 60 * 1000 // 8 hours
+    }
 }));
 
-// SAML Configuration
-const SAML_IDP_URL = 'http://localhost:4001';
-const SERVICE_PROVIDER_ENTITY_ID = 'http://localhost:4003/saml/metadata';
-const ACS_URL = 'http://localhost:4003/saml/acs';
-
-// Store for mapping SAML RequestID to app context
-const samlRequestStore = new Map();
-
-// SAML Session validation middleware
-const requireSAMLSession = (req, res, next) => {
-  if (!req.session || !req.session.samlAssertion) {
-    return res.status(401).json({ 
-      error: 'SAML authentication required',
-      type: 'saml_session_required' 
-    });
-  }
-  
-  // Check if SAML assertion is still valid (not expired)
-  const assertion = req.session.samlAssertion;
-  const now = new Date();
-  const notOnOrAfter = new Date(assertion.conditions.notOnOrAfter);
-  
-  if (now >= notOnOrAfter) {
-    req.session.destroy();
-    return res.status(401).json({ 
-      error: 'SAML assertion expired',
-      type: 'saml_assertion_expired' 
-    });
-  }
-  
-  next();
-};
-
-// Helper function to generate SAML AuthnRequest
-const generateSAMLAuthnRequest = (requestId, relayState) => {
-  const issueInstant = new Date().toISOString();
-  
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<samlp:AuthnRequest 
-  xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
-  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
-  ID="${requestId}"
-  Version="2.0"
-  IssueInstant="${issueInstant}"
-  Destination="${SAML_IDP_URL}/saml/sso"
-  AssertionConsumerServiceURL="${ACS_URL}"
-  ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
-  <saml:Issuer>${SERVICE_PROVIDER_ENTITY_ID}</saml:Issuer>
-  <samlp:NameIDPolicy 
-    Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress" 
-    AllowCreate="true"/>
-  <samlp:RequestedAuthnContext Comparison="exact">
-    <saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef>
-  </samlp:RequestedAuthnContext>
-</samlp:AuthnRequest>`;
-};
-
-// Routes
-
-// Check SAML session status
-app.get('/saml/session/status', (req, res) => {
-  if (req.session && req.session.samlAssertion) {
-    // Check assertion validity
-    const assertion = req.session.samlAssertion;
-    const now = new Date();
-    const notOnOrAfter = new Date(assertion.conditions.notOnOrAfter);
-    
-    if (now < notOnOrAfter) {
-      res.json({
-        authenticated: true,
-        assertion: {
-          nameID: assertion.subject.nameID,
-          attributes: assertion.attributeStatement,
-          sessionIndex: assertion.authnStatement.sessionIndex,
-          conditions: assertion.conditions
-        }
-      });
-    } else {
-      req.session.destroy();
-      res.json({ authenticated: false, reason: 'assertion_expired' });
-    }
-  } else {
-    res.json({ authenticated: false });
-  }
-});
-
-// SP-Initiated SSO - Generate SAML AuthnRequest
-app.get('/saml/sso/initiate', (req, res) => {
-  const { app, returnUrl } = req.query;
-  
-  // Generate unique SAML Request ID
-  const requestId = '_' + crypto.randomBytes(16).toString('hex');
-  const relayState = crypto.randomBytes(16).toString('hex');
-  
-  // Store request context
-  samlRequestStore.set(requestId, { 
-    app, 
-    returnUrl, 
-    relayState,
-    timestamp: Date.now()
-  });
-  
-  console.log(`🔐 Initiating SAML SSO for app: ${app}, RequestID: ${requestId}`);
-  
-  try {
-    // Generate SAML AuthnRequest
-    const samlRequest = generateSAMLAuthnRequest(requestId, relayState);
-    const encodedRequest = Buffer.from(samlRequest).toString('base64');
-    
-    // Build redirect URL to Identity Provider
-    const params = new URLSearchParams({
-      SAMLRequest: encodedRequest,
-      RelayState: relayState
-    });
-    
-    const ssoUrl = `${SAML_IDP_URL}/saml/sso?${params.toString()}`;
-    console.log(`📤 Redirecting to Identity Provider: ${ssoUrl}`);
-    
-    res.redirect(ssoUrl);
-  } catch (error) {
-    console.error('❌ Error generating SAML AuthnRequest:', error);
-    res.status(500).json({ error: 'Failed to initiate SAML SSO' });
-  }
-});
-
-// Assertion Consumer Service (ACS) - Process SAML Response
-app.post('/saml/acs', (req, res) => {
-  try {
-    const { SAMLResponse, RelayState } = req.body;
-    console.log('📨 Received SAML Response at ACS, RelayState:', RelayState);
-    
-    if (!SAMLResponse) {
-      return res.status(400).json({ error: 'Missing SAMLResponse in SAML assertion' });
-    }
-
-    // Decode SAML Response
-    const decodedResponse = Buffer.from(SAMLResponse, 'base64').toString('utf8');
-    console.log('🔍 Decoded SAML Response received');
-    
-    // Parse SAML Response (simplified parsing - in production use proper SAML library)
-    const samlAssertion = parseSAMLResponse(decodedResponse);
-    
-    if (!samlAssertion || !samlAssertion.isValid) {
-      console.error('❌ Invalid SAML Assertion');
-      return res.status(401).json({ error: 'Invalid SAML assertion' });
-    }
-    
-    // Store SAML assertion in session
-    req.session.samlAssertion = samlAssertion;
-    
-    console.log('✅ SAML Assertion validated and stored in session');
-    console.log('👤 Authenticated user:', samlAssertion.subject.nameID);
-    
-    // Find original request context using RelayState
-    const requestContext = Array.from(samlRequestStore.values())
-      .find(ctx => ctx.relayState === RelayState);
-    
-    if (requestContext) {
-      // Clean up request store
-      const requestId = Array.from(samlRequestStore.keys())
-        .find(key => samlRequestStore.get(key).relayState === RelayState);
-      if (requestId) {
-        samlRequestStore.delete(requestId);
-      }
-      
-      // Redirect back to original application
-      if (requestContext.returnUrl) {
-        return res.redirect(requestContext.returnUrl);
-      }
-    }
-    
-    // Default redirect based on app
-    const defaultUrls = {
-      app1: 'http://localhost:3002',
-      app2: 'http://localhost:3003'
-    };
-    res.redirect(defaultUrls[requestContext?.app] || 'http://localhost:3002');
-    
-  } catch (error) {
-    console.error('❌ Error processing SAML Response:', error);
-    res.status(500).json({ error: 'Failed to process SAML authentication' });
-  }
-});
-
-// Helper function to parse SAML Response (simplified)
-const parseSAMLResponse = (samlResponseXml) => {
-  try {
-    // Extract key elements (in production, use proper XML parser and validation)
-    const nameIDMatch = samlResponseXml.match(/<saml:NameID[^>]*>([^<]+)<\/saml:NameID>/);
-    const sessionIndexMatch = samlResponseXml.match(/SessionIndex="([^"]+)"/);
-    const notOnOrAfterMatch = samlResponseXml.match(/NotOnOrAfter="([^"]+)"/);
-    const notBeforeMatch = samlResponseXml.match(/NotBefore="([^"]+)"/);
-    
-    // Extract attributes
-    const emailMatch = samlResponseXml.match(/<saml:Attribute Name="email"[^>]*>[\s\S]*?<saml:AttributeValue[^>]*>([^<]+)<\/saml:AttributeValue>/);
-    const firstNameMatch = samlResponseXml.match(/<saml:Attribute Name="firstName"[^>]*>[\s\S]*?<saml:AttributeValue[^>]*>([^<]+)<\/saml:AttributeValue>/);
-    const lastNameMatch = samlResponseXml.match(/<saml:Attribute Name="lastName"[^>]*>[\s\S]*?<saml:AttributeValue[^>]*>([^<]+)<\/saml:AttributeValue>/);
-    
-    const now = new Date();
-    const notBefore = notBeforeMatch ? new Date(notBeforeMatch[1]) : now;
-    const notOnOrAfter = notOnOrAfterMatch ? new Date(notOnOrAfterMatch[1]) : new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    
-    // Validate time conditions
-    const isValid = now >= notBefore && now < notOnOrAfter;
-    
-    return {
-      isValid,
-      subject: {
-        nameID: nameIDMatch ? nameIDMatch[1] : 'unknown@example.com',
-        format: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'
-      },
-      conditions: {
-        notBefore: notBefore.toISOString(),
-        notOnOrAfter: notOnOrAfter.toISOString(),
-        audience: SERVICE_PROVIDER_ENTITY_ID
-      },
-      attributeStatement: {
-        email: emailMatch ? emailMatch[1] : 'user@example.com',
-        firstName: firstNameMatch ? firstNameMatch[1] : 'John',
-        lastName: lastNameMatch ? lastNameMatch[1] : 'Doe'
-      },
-      authnStatement: {
-        sessionIndex: sessionIndexMatch ? sessionIndexMatch[1] : crypto.randomBytes(8).toString('hex'),
-        authnInstant: now.toISOString(),
-        authnContextClassRef: 'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport'
-      }
-    };
-  } catch (error) {
-    console.error('Error parsing SAML Response:', error);
-    return { isValid: false };
-  }
-};
-
-// Single Logout (SLO) - Initiate logout
-app.post('/saml/slo/initiate', (req, res) => {
-  if (req.session && req.session.samlAssertion) {
-    const assertion = req.session.samlAssertion;
-    console.log('🚪 Initiating SAML Single Logout for user:', assertion.subject.nameID);
-    
-    // Destroy local session
-    req.session.destroy((err) => {
-      if (err) {
-        console.error('Error destroying SAML session:', err);
-        return res.status(500).json({ error: 'Failed to logout' });
-      }
-      
-      console.log('✅ SAML session destroyed');
-      res.json({ success: true, message: 'SAML Single Logout successful' });
-    });
-  } else {
-    res.json({ success: true, message: 'No active SAML session' });
-  }
-});
-
-// Protected Resources
-
-// Protected endpoint for App 1
-app.get('/api/protected/app1', requireSAMLSession, (req, res) => {
-  const assertion = req.session.samlAssertion;
-  
-  res.json({
-    message: 'This is protected data for App 1 via SAML!',
-    timestamp: new Date().toISOString(),
-    samlSubject: assertion.subject,
-    samlAttributes: assertion.attributeStatement,
-    appId: 'app1',
-    protectedData: {
-      feature: 'Advanced Analytics Dashboard',
-      permissions: ['read', 'write', 'admin'],
-      customMessage: 'Welcome to App 1 - Authenticated via SAML 2.0'
+// SAML Service Provider Configuration
+const sp = ServiceProvider({
+    entityID: 'http://localhost:4003/saml/metadata',
+    authnRequestsSigned: false,
+    wantAssertionsSigned: true,
+    wantMessageSigned: true,
+    wantLogoutResponseSigned: false,
+    wantLogoutRequestSigned: false,
+    signatureConfig: {
+        prefix: 'ds',
+        location: { reference: '/samlp:AuthnRequest', action: 'after' }
     },
-    sessionInfo: {
-      sessionIndex: assertion.authnStatement.sessionIndex,
-      validUntil: assertion.conditions.notOnOrAfter
-    }
-  });
+    assertionConsumerService: [{
+        Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
+        Location: 'http://localhost:4003/saml/acs'
+    }],
+    singleLogoutService: [{
+        Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
+        Location: 'http://localhost:4003/saml/sls'
+    }]
 });
 
-// Protected endpoint for App 2  
-app.get('/api/protected/app2', requireSAMLSession, (req, res) => {
-  const assertion = req.session.samlAssertion;
-  
-  res.json({
-    message: 'This is protected data for App 2 via SAML!',
-    timestamp: new Date().toISOString(),
-    samlSubject: assertion.subject,
-    samlAttributes: assertion.attributeStatement,
-    appId: 'app2',
-    protectedData: {
-      feature: 'Reporting Suite',
-      permissions: ['read', 'export'],
-      customMessage: 'Welcome to App 2 - Authenticated via SAML 2.0'
-    },
-    sessionInfo: {
-      sessionIndex: assertion.authnStatement.sessionIndex,
-      validUntil: assertion.conditions.notOnOrAfter
-    }
-  });
-});
+// SAML Identity Provider Configuration (for SP to know about IdP)
+const idp = {
+    entityID: 'http://localhost:4001/saml/metadata',
+    singleSignOnService: [{
+        Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
+        Location: 'http://localhost:4001/saml/sso'
+    }],
+    singleLogoutService: [{
+        Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
+        Location: 'http://localhost:4001/saml/slo'
+    }]
+};
 
-// Service Provider Metadata endpoint
+// SP Metadata endpoint
 app.get('/saml/metadata', (req, res) => {
-  const metadata = `<?xml version="1.0" encoding="UTF-8"?>
-<md:EntityDescriptor 
-  xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
-  entityID="${SERVICE_PROVIDER_ENTITY_ID}">
-  <md:SPSSODescriptor 
-    protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"
-        WantAssertionsSigned="false">
-    <md:AssertionConsumerService
-      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-      Location="${ACS_URL}"
-      index="0"/>
-    <md:SingleLogoutService 
-      Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
-      Location="http://localhost:4003/saml/slo"/>
-  </md:SPSSODescriptor>
-</md:EntityDescriptor>`;
-
-    res.set('Content-Type', 'application/xml');
-    res.send(metadata);
+    res.header('Content-Type', 'text/xml').send(sp.getMetadata());
 });
 
-// Error handling middleware
+// Initiate SAML SSO
+app.get('/saml/sso/initiate', (req, res) => {
+    const { app: appName, returnUrl } = req.query;
+
+    // Store app context and return URL in session
+    req.session.appContext = { appName, returnUrl };
+
+    try {
+        const { id, context: requestXML } = sp.createLoginRequest(idp, 'redirect');
+
+        // Store request ID for validation
+        req.session.samlRequestId = id;
+
+        console.log('🚀 Initiating SAML SSO for:', appName);
+        console.log('📝 SAML Request ID:', id);
+
+        // Redirect to IdP with SAML Request
+        const ssoUrl = `${idp.singleSignOnService[0].Location}?SAMLRequest=${encodeURIComponent(requestXML)}&RelayState=${encodeURIComponent(JSON.stringify({ appName, returnUrl }))}`;
+
+        res.redirect(ssoUrl);
+    } catch (error) {
+        console.error('❌ Error creating SAML login request:', error);
+        res.status(500).json({ error: 'Failed to initiate SAML SSO' });
+    }
+});
+
+// SAML Assertion Consumer Service (ACS)
+app.post('/saml/acs', (req, res) => {
+    const { SAMLResponse, RelayState } = req.body;
+
+    try {
+        const relayState = JSON.parse(decodeURIComponent(RelayState || '{}'));
+        console.log('📨 Received SAML Response, RelayState:', relayState);
+
+        // Parse and validate SAML response
+        const { extract } = sp.parseLoginResponse(idp, 'post', { body: req.body });
+
+        console.log('✅ SAML Response validated successfully');
+        console.log('👤 SAML Subject:', extract.subject);
+        console.log('📋 SAML Attributes:', extract.attributes);
+
+        // Store SAML assertion in session
+        req.session.samlAssertion = {
+            subject: extract.subject,
+            attributes: extract.attributes,
+            sessionIndex: extract.sessionIndex,
+            issuer: extract.issuer,
+            audience: extract.audience,
+            notBefore: extract.conditions?.notBefore,
+            notOnOrAfter: extract.conditions?.notOnOrAfter,
+            authnStatement: extract.authnStatement
+        };
+
+        req.session.authenticated = true;
+
+        // Redirect back to the original app
+        const returnUrl = relayState.returnUrl || `http://localhost:${relayState.appName === 'app2' ? '3003' : '3002'}`;
+        res.redirect(returnUrl);
+
+    } catch (error) {
+        console.error('❌ SAML Response validation failed:', error);
+        res.status(400).json({ error: 'Invalid SAML response', details: error.message });
+    }
+});
+
+// SAML Session Status
+app.get('/saml/session/status', (req, res) => {
+    if (req.session.authenticated && req.session.samlAssertion) {
+        const { notOnOrAfter } = req.session.samlAssertion;
+
+        // Check if assertion is still valid
+        if (notOnOrAfter && new Date() > new Date(notOnOrAfter)) {
+            req.session.destroy();
+            return res.json({ authenticated: false, reason: 'SAML assertion expired' });
+        }
+
+        res.json({
+            authenticated: true,
+            assertion: req.session.samlAssertion
+        });
+    } else {
+        res.json({ authenticated: false });
+    }
+});
+
+// SAML middleware for protecting routes
+const requireSAMLAuth = (req, res, next) => {
+    if (!req.session.authenticated || !req.session.samlAssertion) {
+        return res.status(401).json({
+            error: 'SAML authentication required',
+            message: 'Please authenticate with SAML Identity Provider'
+        });
+    }
+
+    // Check assertion expiration
+    const { notOnOrAfter } = req.session.samlAssertion;
+    if (notOnOrAfter && new Date() > new Date(notOnOrAfter)) {
+        req.session.destroy();
+        return res.status(401).json({
+            error: 'SAML assertion expired',
+            message: 'Your SAML session has expired. Please re-authenticate.'
+        });
+    }
+
+    req.samlUser = req.session.samlAssertion;
+    next();
+};
+
+// Protected endpoints
+app.get('/api/protected/app1', requireSAMLAuth, (req, res) => {
+    res.json({
+        message: 'This is protected data for SAML App 1!',
+        timestamp: new Date().toISOString(),
+        samlSubject: req.samlUser.subject,
+        samlAttributes: req.samlUser.attributes,
+        appId: 'saml-app1',
+        specialData: {
+            feature: 'SAML Advanced Analytics',
+            permissions: ['read', 'write', 'admin'],
+            customMessage: 'Welcome to SAML App 1 - The Main Dashboard'
+        }
+    });
+});
+
+app.get('/api/protected/app2', requireSAMLAuth, (req, res) => {
+    res.json({
+        message: 'This is protected data for SAML App 2!',
+        timestamp: new Date().toISOString(),
+        samlSubject: req.samlUser.subject,
+        samlAttributes: req.samlUser.attributes,
+        appId: 'saml-app2',
+        specialData: {
+            feature: 'SAML Reporting Module',
+            permissions: ['read', 'export'],
+            customMessage: 'Welcome to SAML App 2 - The Reporting Suite'
+        }
+    });
+});
+
+// SAML Single Logout initiation
+app.post('/saml/slo/initiate', requireSAMLAuth, (req, res) => {
+    try {
+        const { id, context: logoutRequestXML } = sp.createLogoutRequest(idp, 'redirect', {
+            nameID: req.samlUser.subject,
+            sessionIndex: req.samlUser.sessionIndex
+        });
+
+        console.log('🚪 Initiating SAML Single Logout');
+
+        // Destroy local session
+        req.session.destroy((err) => {
+            if (err) {
+                console.error('Error destroying session:', err);
+            }
+        });
+
+        // Redirect to IdP for global logout
+        const sloUrl = `${idp.singleLogoutService[0].Location}?SAMLRequest=${encodeURIComponent(logoutRequestXML)}`;
+
+        res.json({
+            success: true,
+            message: 'Local SAML session destroyed',
+            globalLogoutUrl: sloUrl
+        });
+    } catch (error) {
+        console.error('❌ Error creating SAML logout request:', error);
+        res.status(500).json({ error: 'Failed to initiate SAML logout' });
+    }
+});
+
+// SAML Single Logout Service (SLS) - Handle logout response from IdP  
+app.get('/saml/sls', (req, res) => {
+    console.log('🔄 Received SAML Logout Response from IdP');
+
+    res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>SAML Logout Complete</title>
+      <style>
+        body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; text-align: center; }
+        .success { color: green; }
+      </style>
+    </head>
+    <body>
+      <h2>🚪 SAML Single Logout Complete</h2>
+      <p class="success">✅ You have been successfully logged out from all SAML sessions.</p>
+      <a href="http://localhost:3002">Return to App 1</a> | 
+      <a href="http://localhost:3003">Return to App 2</a>
+    </body>
+    </html>
+  `);
+});
+
+// Error handling
 app.use((err, req, res, next) => {
-    console.error('SAML Service Provider Error:', err);
+    console.error('SAML SP Error:', err);
     res.status(err.status || 500).json({
         error: err.message || 'Internal Server Error',
-        type: 'saml_service_provider_error'
+        type: 'saml_sp_error'
     });
 });
-
-// Cleanup old SAML requests (prevent memory leaks)
-setInterval(() => {
-    const now = Date.now();
-    const maxAge = 10 * 60 * 1000; // 10 minutes
-
-    for (const [requestId, context] of samlRequestStore.entries()) {
-        if (now - context.timestamp > maxAge) {
-            samlRequestStore.delete(requestId);
-        }
-    }
-}, 5 * 60 * 1000); // Run cleanup every 5 minutes
 
 if (process.env.NODE_ENV === 'dev') {
     app.listen(4003, () => {
-        console.log('🛡️  SAML Service Provider is running on http://localhost:4003');
+        console.log('🔐 SAML Service Provider is running on http://localhost:4003');
+        console.log('📋 Available endpoints:');
+        console.log('   - Metadata: http://localhost:4003/saml/metadata');
+        console.log('   - SSO Initiate: http://localhost:4003/saml/sso/initiate');
+        console.log('   - Session Status: http://localhost:4003/saml/session/status');
+        console.log('   - Protected App1: http://localhost:4003/api/protected/app1');
+        console.log('   - Protected App2: http://localhost:4003/api/protected/app2');
     });
 }
 
