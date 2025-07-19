@@ -1,7 +1,11 @@
 import express from 'express';
+import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
 import get from 'axios';
+import urlencoded from 'body-parser';
+import json from 'body-parser';
+import cors from 'cors';
 
 // ATTRIBUTE MAPPING (from your working code)
 const INVERSE_ATTRIBUTE_MAP = {
@@ -18,9 +22,23 @@ const INVERSE_ATTRIBUTE_MAP = {
 
 const app = express(); 
 
+app.use(urlencoded({ extended: true }));
+app.use(json());
+app.use(cors({
+    origin: ['http://localhost:4003', 'http://localhost:4004'],
+    credentials: true
+}));
+
+app.use(cookieSession({
+    name: 'session',
+    keys: ['my-favorite-secret'],
+    maxAge: 8 * 60 * 60 * 1000
+}));
+
+
 setSchemaValidator(validator);
 
-const URI_IDP_METADATA = 'http://localhost:4002/saml/metadata';
+const URI_IDP_METADATA = 'http://localhost:4002/idp/metadata';
 
 get(URI_IDP_METADATA).then(response => {
     const idp = IdentityProvider({
@@ -29,7 +47,7 @@ get(URI_IDP_METADATA).then(response => {
     });
 
     const sp = ServiceProvider({
-        entityID: 'http://localhost:4001/saml/metadata',
+        entityID: 'http://localhost:4001/sp/metadata',
         authnRequestsSigned: false,
         wantAssertionsSigned: false,
         wantMessageSigned: false,
@@ -37,13 +55,13 @@ get(URI_IDP_METADATA).then(response => {
         wantLogoutRequestSigned: false,
         assertionConsumerService: [{
             Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-            Location: 'http://localhost:4001/saml/acs',
+            Location: 'http://localhost:4001/sp/acs',
         }],
         nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress']
     });
 
-    app.post('/saml/acs', async (req, res) => {
-        console.log('Received /saml/acs post request...');
+    app.post('/sp/acs', async (req, res) => {
+        console.log('Received /sp/acs post request...');
         const relayState = req.body.RelayState;
         console.log('Relay state:', relayState);
 
@@ -83,7 +101,7 @@ get(URI_IDP_METADATA).then(response => {
     });
 
     // Login endpoint
-    app.get('/login', (req, res) => {
+    app.get('/sp/sso/initiate', (req, res) => {
         const { app: appName, returnUrl } = req.query;
         console.log(`🚀 Initiating SAML login for app: ${appName}`);
 
@@ -99,12 +117,12 @@ get(URI_IDP_METADATA).then(response => {
     });
 
     // SP metadata
-    app.get('/saml/metadata', (req, res) => {
+    app.get('/sp/metadata', (req, res) => {
         res.header('Content-Type', 'text/xml').send(sp.getMetadata());
     });
 
     // Session status endpoint
-    app.get('/saml/session/status', (req, res) => {
+    app.get('/sp/session/status', (req, res) => {
         if (req.session.loggedIn && req.session.samlAssertion) {
             res.json({
                 authenticated: true,

@@ -15,7 +15,7 @@ const App = () => {
 
   const checkSamlSession = async () => {
     try {
-      const response = await axios.get(`${SAML_BACKEND}/saml/session/status`, {
+      const response = await axios.get(`${SAML_BACKEND}/sp/session/status`, {
         withCredentials: true
       });
 
@@ -31,7 +31,7 @@ const App = () => {
 
   const handleSamlLogin = () => {
     const returnUrl = window.location.origin;
-    window.location.href = `${SAML_BACKEND}/saml/sso/initiate?app=${APP_NAME}&returnUrl=${encodeURIComponent(returnUrl)}`;
+    window.location.href = `${SAML_BACKEND}/sp/sso/initiate?app=${APP_NAME}&returnUrl=${encodeURIComponent(returnUrl)}`;
   };
 
   const fetchPrivateData = async () => {
@@ -60,33 +60,7 @@ const App = () => {
       alert('As expected, the request with a fake token was rejected.');
     }
   };
-
-  const handleLogout = async () => {
-    try {
-      await axios.post(`${SAML_BACKEND}/saml/logout`, {}, {
-        withCredentials: true
-      });
-      setSamlSession(null);
-      setPrivateData(null);
-    } catch (error) {
-      console.error('Error during logout:', error);
-    }
-  };
-
-  const handleSingleLogout = async () => {
-    try {
-      const response = await axios.post(`${SAML_BACKEND}/saml/slo/initiate`, {}, {
-        withCredentials: true
-      });
-
-      if (response.data.globalLogoutUrl) {
-        window.location.href = response.data.globalLogoutUrl;
-      }
-    } catch (error) {
-      console.error('Error during single logout:', error);
-    }
-  };
-
+  
   if (loading) {
     return <div>Loading...</div>;
   }

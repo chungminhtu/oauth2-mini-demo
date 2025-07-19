@@ -1,9 +1,27 @@
 import express from 'express';
+import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
+import urlencoded from 'body-parser';
+import json from 'body-parser';
 import { v4 as uuidv4 } from 'uuid';
+import cors from 'cors';
 
 const app = express();
+
+app.use(urlencoded({ extended: true }));
+app.use(json());
+
+app.use(cors({
+  origin: ['http://localhost:4003', 'http://localhost:4004'],
+  credentials: true
+}));
+
+app.use(cookieSession({
+  name: 'idp_session',
+  keys: ['idp-secret-key'],
+  maxAge: 24 * 60 * 60 * 1000
+}));
 
 setSchemaValidator(validator);
 
@@ -23,45 +41,49 @@ const users = {
 
 // Identity Provider configuration
 const idp = IdentityProvider({
-  entityID: 'http://localhost:4002/saml/metadata',
+  entityID: 'http://localhost:4002/idp/metadata',
   wantAuthnRequestsSigned: false,
   nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
   singleSignOnService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
-    Location: 'http://localhost:4002/saml/sso'
+    Location: 'http://localhost:4002/idp/sso'
   }]
 });
 
 // Service Provider configuration (for parsing requests)
 const sp = ServiceProvider({
-  entityID: 'http://localhost:4001/saml/metadata',
+  entityID: 'http://localhost:4001/sp/metadata',
   authnRequestsSigned: false,
   wantAssertionsSigned: false,
+  wantMessageSigned: false,
+  wantLogoutResponseSigned: false,
+  wantLogoutRequestSigned: false,
   assertionConsumerService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-    Location: 'http://localhost:4001/saml/acs'
-  }]
+    Location: 'http://localhost:4001/sp/acs',
+  }],
+  nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress']
 });
 
 const samlRequestStore = new Map();
 
 // IdP Metadata endpoint
-app.get('/saml/metadata', (req, res) => {
+app.get('/idp/metadata', (req, res) => {
   res.header('Content-Type', 'text/xml').send(idp.getMetadata());
 });
 
 // SAML SSO endpoint
-app.get('/saml/sso', (req, res) => {
+app.get('/idp/sso', async (req, res) => {
   const { SAMLRequest, RelayState } = req.query;
-
-  console.log('📨 Received SAML AuthnRequest, RelayState:', RelayState);
-
   if (!SAMLRequest) {
     return res.status(400).json({ error: 'Missing SAMLRequest parameter' });
   }
 
   try {
-    const { extract } = idp.parseLoginRequest(sp, 'redirect', { query: req.query });
+    const { extract } = await idp.parseLoginRequest(sp, 'redirect', req);
+
+    console.log('Query:', req.query);
+    console.log('Extracted data:', extract);
     const requestId = extract.request?.id || extract.id || `_${uuidv4()}`;
 
     samlRequestStore.set(requestId, {
@@ -111,7 +133,7 @@ app.get('/saml/sso', (req, res) => {
 });
 
 // Authentication processing
-app.post('/saml/authenticate', (req, res) => {
+app.post('/idp/authenticate', (req, res) => {
   const { username, password, requestId } = req.body;
 
   console.log(`🔐 Authentication attempt for user: ${username}`);

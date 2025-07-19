@@ -16,7 +16,7 @@ const App = () => {
 
   const checkSAMLSession = async () => {
     try {
-      const response = await axios.get(`${SAML_BACKEND}/saml/session/status`, {
+      const response = await axios.get(`${SAML_BACKEND}/sp/session/status`, {
         withCredentials: true
       });
 
@@ -38,7 +38,7 @@ const App = () => {
 
   const handleSAMLLogin = () => {
     const returnUrl = encodeURIComponent(window.location.href);
-    window.location.href = `${SAML_BACKEND}/saml/sso/initiate?app=app3&returnUrl=${returnUrl}`;
+    window.location.href = `${SAML_BACKEND}/sp/sso/initiate?app=app3&returnUrl=${returnUrl}`;
   };
 
   const fetchPrivateData = async () => {
@@ -72,41 +72,6 @@ const App = () => {
     }
   };
 
-  const handleLogout = async () => {
-    try {
-      await axios.post(`${SAML_BACKEND}/saml/logout`, {}, {
-        withCredentials: true
-      });
-      setAuthenticated(false);
-      setSamlUser(null);
-      setPrivateData(null);
-      console.log('🚪 Logged out successfully');
-    } catch (error) {
-      console.error('Error during logout:', error);
-    }
-  };
-
-  const handleSingleLogout = async () => {
-    try {
-      const response = await axios.post(`${SAML_BACKEND}/saml/slo/initiate`, {}, {
-        withCredentials: true
-      });
-
-      if (response.data.globalLogoutUrl) {
-        // Redirect to IdP for global logout
-        window.location.href = response.data.globalLogoutUrl;
-      } else {
-        // Local logout only
-        setAuthenticated(false);
-        setSamlUser(null);
-        setPrivateData(null);
-      }
-    } catch (error) {
-      console.error('Error during single logout:', error);
-      // Fallback to local logout
-      handleLogout();
-    }
-  };
 
   if (loading) {
     return (
