@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import session from 'express-session';
-import { ServiceProvider } from 'samlify';
+import { ServiceProvider, IdentityProvider } from 'samlify';
 
 const app = express();
 
@@ -28,14 +28,10 @@ app.use(session({
 const sp = ServiceProvider({
     entityID: 'http://localhost:4003/saml/metadata',
     authnRequestsSigned: false,
-    wantAssertionsSigned: true,
-    wantMessageSigned: true,
+    wantAssertionsSigned: false,
+    wantMessageSigned: false,
     wantLogoutResponseSigned: false,
     wantLogoutRequestSigned: false,
-    signatureConfig: {
-        prefix: 'ds',
-        location: { reference: '/samlp:AuthnRequest', action: 'after' }
-    },
     assertionConsumerService: [{
         Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
         Location: 'http://localhost:4003/saml/acs'
@@ -47,8 +43,9 @@ const sp = ServiceProvider({
 });
 
 // SAML Identity Provider Configuration (for SP to know about IdP)
-const idp = {
+const idp = IdentityProvider({
     entityID: 'http://localhost:4001/saml/metadata',
+    wantAuthnRequestsSigned: false,
     singleSignOnService: [{
         Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
         Location: 'http://localhost:4001/saml/sso'
@@ -57,7 +54,7 @@ const idp = {
         Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
         Location: 'http://localhost:4001/saml/slo'
     }]
-};
+});
 
 // SP Metadata endpoint
 app.get('/saml/metadata', (req, res) => {
