@@ -112,7 +112,7 @@ app.get('/idp/sso', async (req, res) => {
             </head>
             <body>
                 <h2>🔐 Demo SAML Identity Provider</h2>
-                <form method="post" action="/saml/authenticate">
+                <form method="post" action="/idp/authenticate">
                     <input type="hidden" name="requestId" value="${requestId}">
                     <input type="hidden" name="relayState" value="${RelayState || ''}">
                     <label>Email:</label>
@@ -195,7 +195,7 @@ const generateAndSendSAMLResponse = (user, requestId, res) => {
             <html>
             <head><title>SAML Response</title></head>
             <body onload="document.forms[0].submit()">
-                <form method="post" action="http://localhost:4003/saml/acs">
+                <form method="post" action="http://localhost:4001/sp/acs">
                     <input type="hidden" name="SAMLResponse" value="${samlResponse}">
                     <input type="hidden" name="RelayState" value="${requestContext.relayState || ''}">
                     <p>🔄 Redirecting back to Service Provider...</p>
