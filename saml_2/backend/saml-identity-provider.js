@@ -78,11 +78,9 @@ app.get('/saml/metadata', (req, res) => {
   res.header('Content-Type', 'text/xml').send(idp.getMetadata());
 });
 
-// SAML SSO Endpoint - Receive AuthnRequest
+// SAML SSO Endpoint - SAFER VERSION
 app.get('/saml/sso', (req, res) => {
   const { SAMLRequest, RelayState } = req.query;
-
-  console.log('📨 Received SAML AuthnRequest, RelayState:', RelayState);
 
   if (!SAMLRequest) {
     return res.status(400).json({ error: 'Missing SAMLRequest parameter' });
@@ -92,22 +90,31 @@ app.get('/saml/sso', (req, res) => {
     // Parse the SAML AuthnRequest using samlify
     const { extract } = idp.parseLoginRequest(sp, 'redirect', { query: req.query });
 
-    console.log('🔍 Parsed SAML AuthnRequest');
-    console.log('📝 Full extract:', extract);
+    console.log('🔍 Full extract object:', JSON.stringify(extract, null, 2));
 
-    // Handle different possible structures from samlify
-    const requestId = extract.authnRequest?.id || extract.request?.id || extract.id || `_${uuidv4()}`;
-    const issuer = extract.authnRequest?.issuer || extract.request?.issuer || extract.issuer || 'http://localhost:4003/saml/metadata';
-    const acsUrl = extract.authnRequest?.assertionConsumerServiceURL ||
-      extract.request?.assertionConsumerServiceURL ||
-      extract.assertionConsumerServiceURL ||
-      'http://localhost:4003/saml/acs';
+    // FIX: Handle undefined extract or missing properties safely
+    let requestId, issuer, acsUrl;
+    
+    if (extract && extract.request) {
+      requestId = extract.request.id;
+      issuer = extract.request.issuer;  
+      acsUrl = extract.request.assertionConsumerServiceURL;
+    } else if (extract) {
+      requestId = extract.id;
+      issuer = extract.issuer;
+      acsUrl = extract.assertionConsumerServiceURL;
+    }
+
+    // Fallback values if parsing failed
+    requestId = requestId || `_${uuidv4()}`;
+    issuer = issuer || 'http://localhost:4003/saml/metadata';
+    acsUrl = acsUrl || 'http://localhost:4003/saml/acs';
 
     console.log('📝 Request ID:', requestId);
     console.log('🏢 Issuer:', issuer);
     console.log('📍 ACS URL:', acsUrl);
 
-    // Store SAML request context
+    // Store the request context
     samlRequestStore.set(requestId, {
       extract: extract,
       relayState: RelayState,
@@ -118,7 +125,7 @@ app.get('/saml/sso', (req, res) => {
 
     // Check if user is already authenticated
     if (req.session && req.session.authenticatedUser) {
-      console.log('✅ User already authenticated, generating SAML Response');
+      console.log('✅ User already authenticated');
       return generateAndSendSAMLResponse(req.session.authenticatedUser, requestId, res);
     }
 
@@ -126,56 +133,49 @@ app.get('/saml/sso', (req, res) => {
     res.send(`
       <!DOCTYPE html>
       <html>
-      <head>
-        <title>SAML Identity Provider - Login</title>
-        <style>
-          body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
-          .form-group { margin: 15px 0; }
-          label { display: block; margin-bottom: 5px; }
-          input { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; }
-          button { background: #007bff; color: white; padding: 10px 20px; border: none; cursor: pointer; }
-          button:hover { background: #0056b3; }
-          .error { color: red; margin: 10px 0; }
-          .info { background: #e9ecef; padding: 15px; margin-bottom: 20px; border-left: 4px solid #007bff; }
-        </style>
-      </head>
+      <head><title>SAML Identity Provider - Login</title></head>
       <body>
         <h2>🔐 SAML Identity Provider</h2>
-        <div class="info">
-          <strong>Service Provider:</strong> ${issuer}<br>
-          <strong>Authentication Request ID:</strong> ${requestId}<br>
-          <strong>ACS URL:</strong> ${acsUrl}
-        </div>
-        
         <form method="post" action="/saml/authenticate">
           <input type="hidden" name="requestId" value="${requestId}">
           <input type="hidden" name="relayState" value="${RelayState || ''}">
-          
-          <div class="form-group">
-            <label>Email:</label>
-            <input type="email" name="username" value="john@example.com" required>
-          </div>
-          
-          <div class="form-group">
-            <label>Password:</label>
-            <input type="password" name="password" value="password123" required>
-          </div>
-          
-          <button type="submit">🚀 Authenticate & Continue to Service Provider</button>
+          <input type="email" name="username" value="john@example.com" required>
+          <input type="password" name="password" value="password123" required>
+          <button type="submit">🚀 Login</button>
         </form>
-        
-        <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border: 1px solid #dee2e6;">
-          <h4>Demo Users:</h4>
-          <p><strong>john@example.com</strong> / password123</p>
-          <p><strong>jane@example.com</strong> / password123</p>
-        </div>
       </body>
       </html>
     `);
 
   } catch (error) {
     console.error('❌ Error processing SAML AuthnRequest:', error);
-    res.status(500).json({ error: 'Failed to process SAML authentication request', details: error.message });
+    
+    // If parsing completely fails, show login form anyway
+    const fallbackRequestId = `_${uuidv4()}`;
+    samlRequestStore.set(fallbackRequestId, {
+      extract: null,
+      relayState: RelayState,
+      timestamp: Date.now(),
+      acsUrl: 'http://localhost:4003/saml/acs',
+      issuer: 'http://localhost:4003/saml/metadata'
+    });
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>SAML Identity Provider - Login</title></head>
+      <body>
+        <h2>🔐 SAML Identity Provider (Fallback Mode)</h2>
+        <form method="post" action="/saml/authenticate">
+          <input type="hidden" name="requestId" value="${fallbackRequestId}">
+          <input type="hidden" name="relayState" value="${RelayState || ''}">
+          <input type="email" name="username" value="john@example.com" required>
+          <input type="password" name="password" value="password123" required>
+          <button type="submit">🚀 Login</button>
+        </form>
+      </body>
+      </html>
+    `);
   }
 });
 

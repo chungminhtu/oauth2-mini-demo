@@ -61,30 +61,30 @@ app.get('/saml/metadata', (req, res) => {
     res.header('Content-Type', 'text/xml').send(sp.getMetadata());
 });
 
-// Initiate SAML SSO
+// Initiate SAML SSO - FIXED VERSION
 app.get('/saml/sso/initiate', (req, res) => {
     const { app: appName, returnUrl } = req.query;
 
     console.log('🚀 Initiating SAML SSO for:', appName);
-    console.log('📍 Return URL:', returnUrl);
-
-    // Store app context and return URL in session
     req.session.appContext = { appName, returnUrl };
 
     try {
-        const { id, context: requestXML } = sp.createLoginRequest(idp, 'redirect');
-
-        // Store request ID for validation
+        const { id, context } = sp.createLoginRequest(idp, 'redirect');
         req.session.samlRequestId = id;
 
-        console.log('📝 SAML Request ID:', id);
+        // FIX: Extract SAMLRequest if context is a full URL
+        let samlRequest;
+        if (typeof context === 'string' && context.includes('SAMLRequest=')) {
+            const urlObj = new URL(context);
+            samlRequest = urlObj.searchParams.get('SAMLRequest');
+        } else {
+            samlRequest = context;
+        }
 
-        // Redirect to IdP with SAML Request
-        const ssoUrl = `http://localhost:4001/saml/sso?SAMLRequest=${encodeURIComponent(requestXML)}&RelayState=${encodeURIComponent(JSON.stringify({ appName, returnUrl }))}`;
+        const relayState = JSON.stringify({ appName, returnUrl });
+        const ssoUrl = `http://localhost:4001/saml/sso?SAMLRequest=${encodeURIComponent(samlRequest)}&RelayState=${encodeURIComponent(relayState)}`;
 
-        console.log('🔗 Redirecting to:', ssoUrl.substring(0, 100) + '...');
         res.redirect(ssoUrl);
-
     } catch (error) {
         console.error('❌ Error creating SAML login request:', error);
         res.status(500).json({ error: 'Failed to initiate SAML SSO', details: error.message });
