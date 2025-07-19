@@ -2,7 +2,8 @@ import express from 'express';
 import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
-import { urlencoded, json } from 'body-parser';
+import urlencoded from 'body-parser';
+import json from 'body-parser';
 import { v4 as uuidv4 } from 'uuid';
 
 const app = express();

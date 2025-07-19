@@ -2,11 +2,10 @@ import express from 'express';
 import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
-import { get } from 'axios';
-import pkg from 'body-parser';
-const { urlencoded, json } = pkg;
+import get from 'axios';
+import urlencoded from 'body-parser';
+import json from 'body-parser';
 import cors from 'cors';
-const debug = require('debug')('samlify');
 
 // ATTRIBUTE MAPPING (from your working code)
 const INVERSE_ATTRIBUTE_MAP = {
@@ -62,7 +61,7 @@ get(URI_IDP_METADATA).then(response => {
 
     // ACS endpoint (exactly from your working code)
     app.post('/saml/acs', async (req, res) => {
-        debug('Received /saml/acs post request...');
+        console.log('Received /saml/acs post request...');
         const relayState = req.body.RelayState;
         console.log('Relay state:', relayState);
 
@@ -107,7 +106,7 @@ get(URI_IDP_METADATA).then(response => {
         console.log(`🚀 Initiating SAML login for app: ${appName}`);
 
         const { id, context } = sp.createLoginRequest(idp, 'redirect');
-        debug('Id: %s', id);
+        console.log('Id: %s', id);
 
         const parsedUrl = new URL(context);
         const relayState = JSON.stringify({ app: appName, returnUrl: returnUrl });
