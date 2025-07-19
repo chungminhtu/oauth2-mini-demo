@@ -7,13 +7,14 @@
     "SSO": "NODE_ENV=dev DEBUG=oidc-provider:* nodemon backend/oidc-provider.js",
     "app1": "vite --open",
     "app2": "vite --config app2/vite.config.js",
-    "-------":"-----------",
+    "-------": "-----------",
     "saml-backend": "NODE_ENV=dev nodemon saml_2/backend/server.js",
     "saml-idp": "NODE_ENV=dev nodemon saml_2/backend/saml-identity-provider.js",
     "app3": "vite --config saml_2/app3/vite.config.js",
     "app4": "vite --config saml_2/app4/vite.config.js"
   },
   "dependencies": {
+    "@authenio/samlify-node-xmllint": "^2.0.0",
     "axios": "^1.7.2",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",

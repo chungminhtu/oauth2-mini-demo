@@ -72,18 +72,24 @@ app.get('/saml/sso/initiate', (req, res) => {
         const { id, context } = sp.createLoginRequest(idp, 'redirect');
         req.session.samlRequestId = id;
 
-        // FIX: Extract SAMLRequest if context is a full URL
+        console.log('📝 SAML Request ID:', id);
+        console.log('🔗 Context type:', typeof context);
+
+        // FIX: Handle context properly - it should be a URL with SAMLRequest
         let samlRequest;
         if (typeof context === 'string' && context.includes('SAMLRequest=')) {
+            // Extract SAMLRequest from URL
             const urlObj = new URL(context);
             samlRequest = urlObj.searchParams.get('SAMLRequest');
         } else {
+            // Context is the SAMLRequest directly
             samlRequest = context;
         }
 
         const relayState = JSON.stringify({ appName, returnUrl });
         const ssoUrl = `http://localhost:4001/saml/sso?SAMLRequest=${encodeURIComponent(samlRequest)}&RelayState=${encodeURIComponent(relayState)}`;
 
+        console.log('🔄 Redirecting to:', ssoUrl);
         res.redirect(ssoUrl);
     } catch (error) {
         console.error('❌ Error creating SAML login request:', error);
@@ -91,25 +97,55 @@ app.get('/saml/sso/initiate', (req, res) => {
     }
 });
 
-app.post('/saml/acs', async (req, res) => {
+// SAML Assertion Consumer Service (ACS) - FIXED VERSION
+app.post('/saml/acs', (req, res) => {
     const { SAMLResponse, RelayState } = req.body;
-    let relayState = {};
-    try {
-        relayState = JSON.parse(decodeURIComponent(RelayState || '{}'));
-    } catch { /* ignore */ }
 
     try {
-        const { extract } = await sp.parseLoginResponse(idp, 'post', { body: req.body });
+        let relayState = {};
+        try {
+            relayState = JSON.parse(decodeURIComponent(RelayState || '{}'));
+        } catch (e) {
+            console.warn('Could not parse RelayState:', RelayState);
+            relayState = { appName: 'app3', returnUrl: 'http://localhost:3002' };
+        }
 
-        console.log('✅ SAML Response validated. Subject:', extract.nameID);
+        console.log('📨 Received SAML Response, RelayState:', relayState);
+
+        // Parse and validate SAML response
+        const { extract } = sp.parseLoginResponse(idp, 'post', { body: req.body });
+
+        console.log('✅ SAML Response validated successfully');
+        console.log('👤 SAML Subject (nameID):', extract.nameID);
+        console.log('📋 SAML Attributes:', extract.attributes);
+        console.log('🔑 Session Index:', extract.sessionIndex);
+
+        // Store SAML assertion in session
+        req.session.samlAssertion = {
+            subject: extract.nameID,
+            attributes: extract.attributes,
+            sessionIndex: extract.sessionIndex,
+            issuer: extract.issuer,
+            audience: extract.audience,
+            notBefore: extract.conditions?.notBefore,
+            notOnOrAfter: extract.conditions?.notOnOrAfter,
+            authnStatement: extract.authnStatement
+        };
+
         req.session.authenticated = true;
-        req.session.samlAssertion = extract;          // store everything
+        req.session.authMethod = 'saml';
 
-        const returnUrl = relayState.returnUrl || 'http://localhost:3002';
-        return res.redirect(returnUrl);
-    } catch (err) {
-        console.error('❌ parseLoginResponse error:', err);
-        return res.status(400).json({ error: 'Invalid SAML response', details: err.message });
+        console.log('💾 Stored SAML assertion in session');
+
+        // Redirect back to the original app
+        const returnUrl = relayState.returnUrl || `http://localhost:${relayState.appName === 'app4' ? '3003' : '3002'}`;
+
+        console.log('🔄 Redirecting back to:', returnUrl);
+        res.redirect(returnUrl);
+
+    } catch (error) {
+        console.error('❌ SAML Response validation failed:', error);
+        res.status(400).json({ error: 'Invalid SAML response', details: error.message });
     }
 });
 
@@ -215,6 +251,7 @@ app.post('/saml/slo/initiate', requireSAMLAuth, (req, res) => {
         });
 
         console.log('🚪 Initiating SAML Single Logout');
+        console.log('📝 Logout Request ID:', id);
 
         // Destroy local session
         req.session.destroy((err) => {
@@ -307,4 +344,3 @@ if (process.env.NODE_ENV === 'dev') {
 }
 
 export default app;
-
