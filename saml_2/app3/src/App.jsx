@@ -48,17 +48,17 @@ const App = () => {
     try {
       setError(null);
       console.log(`🔒 Fetching private data from: ${API_ENDPOINT}`);
-      
+
       const response = await axios.get(API_ENDPOINT, {
         withCredentials: true
       });
-      
+
       setPrivateData(response.data);
       console.log('📊 Private data received:', response.data);
-      
+
     } catch (error) {
       console.error('Error fetching private data:', error);
-      
+
       if (error.response?.status === 401) {
         setError('Your SAML session has expired. Please log in again.');
         setAuthenticated(false);
@@ -80,6 +80,11 @@ const App = () => {
       console.error('Error with fake token:', error.response?.data || error.message);
       alert('As expected, the request with a fake token was rejected.');
     }
+  };
+
+  const handleSingleLogout = () => {
+    console.log('🔐 Initiating SAML Single Logout...');
+    window.location.href = `${SAML_BACKEND}/sp/slo/initiate`;
   };
 
   if (loading) {
@@ -111,7 +116,8 @@ const App = () => {
               padding: '10px 20px',
               border: 'none',
               cursor: 'pointer',
-              fontSize: '16px'
+              fontSize: '16px',
+              borderRadius: '5px'
             }}
           >
             🚀 Login with SAML
@@ -127,7 +133,7 @@ const App = () => {
             <p><strong>Common Name:</strong> {samlUser?.attributes?.cn}</p>
             <p><strong>Title:</strong> {samlUser?.attributes?.title}</p>
             <p><strong>Session Index:</strong> {samlUser?.sessionIndex}</p>
-            
+
             {/* Debug info */}
             <details style={{ marginTop: '10px' }}>
               <summary>🔍 Debug Info (Click to expand)</summary>
@@ -169,21 +175,6 @@ const App = () => {
             </button>
 
             <button
-              onClick={handleLogout}
-              style={{
-                background: '#6c757d',
-                color: 'white',
-                padding: '10px 15px',
-                border: 'none',
-                cursor: 'pointer',
-                margin: '5px',
-                borderRadius: '5px'
-              }}
-            >
-              🚪 Local Logout
-            </button>
-
-            <button
               onClick={handleSingleLogout}
               style={{
                 background: '#dc3545',
@@ -206,7 +197,7 @@ const App = () => {
                 <h4>{privateData.message}</h4>
                 <p><strong>App ID:</strong> {privateData.appId}</p>
                 <p><strong>Timestamp:</strong> {privateData.timestamp}</p>
-                
+
                 {privateData.user && (
                   <div>
                     <h5>User Info:</h5>
@@ -238,27 +229,6 @@ const App = () => {
       )}
     </div>
   );
-};
-
-const handleLogout = async () => {
-  try {
-    await axios.get(`${SAML_BACKEND}/sp/logout`, {
-      withCredentials: true
-    });
-    // App3 uses these state variables:
-    setAuthenticated(false);
-    setSamlUser(null);
-    setPrivateData(null);
-    setError && setError(null);
-    console.log('✅ Local logout successful');
-  } catch (error) {
-    console.error('Error during logout:', error);
-  }
-};
-
-const handleSingleLogout = () => {
-  console.log('🔐 Initiating SAML Single Logout...');
-  window.location.href = `${SAML_BACKEND}/sp/slo/initiate`;
 };
 
 export default App;

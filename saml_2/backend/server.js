@@ -139,7 +139,7 @@ app.post('/sp/acs', (req, res) => {
         console.log('✅ User session created for:', nameId);
 
         // Handle redirect based on RelayState
-        let returnUrl = 'http://localhost:4003'; // Change default to app3
+        let returnUrl = null;
 
         if (relayState) {
             try {
@@ -154,11 +154,34 @@ app.post('/sp/acs', (req, res) => {
                     returnUrl = 'http://localhost:4004';
                 }
             } catch (e) {
-                console.log('⚠️ Could not parse RelayState as JSON, using default');
+                console.log('⚠️ Could not parse RelayState as JSON');
                 console.log('RelayState value:', relayState);
             }
-        } else {
-            console.log('⚠️ No RelayState provided, using default app3 URL');
+        }
+
+        // If no specific return URL, show a selection page
+        if (!returnUrl) {
+            return res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Login Successful</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                        .success { background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px auto; max-width: 500px; }
+                        a { display: inline-block; margin: 10px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="success">
+                        <h2>🎉 SAML Login Successful!</h2>
+                        <p>Choose which application to access:</p>
+                        <a href="http://localhost:4003">Go to App 3</a>
+                        <a href="http://localhost:4004">Go to App 4</a>
+                    </div>
+                </body>
+                </html>
+            `);
         }
 
         console.log(`🔗 Redirecting to: ${returnUrl}`);
