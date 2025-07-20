@@ -12,6 +12,14 @@ const IDP_SSO_URL = 'http://localhost:4002/idp/sso';
 const SP_ENTITY_ID = 'http://localhost:4001/sp/metadata';
 const SP_ACS_URL = 'http://localhost:4001/sp/acs';
 
+// Add this near the top with other constants
+const APP_URL_MAPPING = {
+    'app3': 'http://localhost:4003',
+    'app4': 'http://localhost:4004'  // Add this back if you want to support it
+};
+
+const DEFAULT_APP_URL = 'http://localhost:4003';
+
 app.use(cors({
     origin: ['http://localhost:4003', 'http://localhost:4004'],
     credentials: true
@@ -38,7 +46,7 @@ app.get('/sp/sso/initiate', (req, res) => {
     const id = '_' + uuidv4();
     const issueInstant = new Date().toISOString();
 
-    // Store the relay state in session
+    // Store the relay state in session for backup
     req.session.relayState = {
         app: appName,
         returnUrl: returnUrl,
@@ -58,10 +66,15 @@ app.get('/sp/sso/initiate', (req, res) => {
     </samlp:AuthnRequest>`;
 
     const samlRequest = Buffer.from(authnRequest).toString('base64');
-    const relayStateParam = JSON.stringify({
+    
+    // Create proper RelayState - this is key!
+    const relayStateData = {
         app: appName,
         returnUrl: returnUrl
-    });
+    };
+    const relayStateParam = JSON.stringify(relayStateData);
+    
+    console.log('🔗 Creating RelayState:', relayStateData);
 
     const html = `<html>
         <body onload="document.forms[0].submit()">
@@ -83,7 +96,7 @@ app.post('/sp/acs', (req, res) => {
     console.log('📋 SAMLResponse present:', !!req.body.SAMLResponse);
 
     const relayState = req.body.RelayState;
-    console.log('📋 Relay state:', relayState);
+    console.log('📋 Raw RelayState from request:', relayState);
 
     if (!req.body.SAMLResponse) {
         console.error('❌ Missing SAMLResponse');
@@ -138,54 +151,63 @@ app.post('/sp/acs', (req, res) => {
 
         console.log('✅ User session created for:', nameId);
 
-        // Handle redirect based on RelayState
-        let returnUrl = null;
+        // Determine redirect URL from RelayState
+        let redirectUrl = null;
 
+        // Try to parse RelayState first
         if (relayState) {
             try {
                 const relayData = JSON.parse(relayState);
                 console.log('📋 Parsed RelayState:', relayData);
 
+                // Priority 1: Use specific returnUrl if provided
                 if (relayData.returnUrl) {
-                    returnUrl = relayData.returnUrl;
-                } else if (relayData.app === 'app3') {
-                    returnUrl = 'http://localhost:4003';
-                } else if (relayData.app === 'app4') {
-                    returnUrl = 'http://localhost:4004';
+                    redirectUrl = relayData.returnUrl;
+                    console.log(`🎯 Using returnUrl from RelayState: ${redirectUrl}`);
                 }
-            } catch (e) {
-                console.log('⚠️ Could not parse RelayState as JSON');
-                console.log('RelayState value:', relayState);
+                // Priority 2: Map app name to URL
+                else if (relayData.app && APP_URL_MAPPING[relayData.app]) {
+                    redirectUrl = APP_URL_MAPPING[relayData.app];
+                    console.log(`🎯 Mapped app '${relayData.app}' to URL: ${redirectUrl}`);
+                }
+                // Priority 3: Try to guess from app name
+                else if (relayData.app) {
+                    console.log(`⚠️ App '${relayData.app}' not found in mapping, trying fallback...`);
+                    if (relayData.app === 'app3') {
+                        redirectUrl = 'http://localhost:4003';
+                    } else if (relayData.app === 'app4') {
+                        redirectUrl = 'http://localhost:4004';
+                    }
+                }
+
+            } catch (parseError) {
+                console.log('⚠️ Could not parse RelayState as JSON:', parseError.message);
+                console.log('Raw RelayState:', relayState);
             }
         }
 
-        // If no specific return URL, show a selection page
-        if (!returnUrl) {
-            return res.send(`
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Login Successful</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-                        .success { background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px auto; max-width: 500px; }
-                        a { display: inline-block; margin: 10px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
-                    </style>
-                </head>
-                <body>
-                    <div class="success">
-                        <h2>🎉 SAML Login Successful!</h2>
-                        <p>Choose which application to access:</p>
-                        <a href="http://localhost:4003">Go to App 3</a>
-                        <a href="http://localhost:4004">Go to App 4</a>
-                    </div>
-                </body>
-                </html>
-            `);
+        // Try session-stored RelayState as backup
+        if (!redirectUrl && req.session.relayState) {
+            console.log('🔄 Trying session-stored RelayState:', req.session.relayState);
+            const sessionRelay = req.session.relayState;
+            
+            if (sessionRelay.returnUrl) {
+                redirectUrl = sessionRelay.returnUrl;
+                console.log(`🎯 Using returnUrl from session: ${redirectUrl}`);
+            } else if (sessionRelay.app && APP_URL_MAPPING[sessionRelay.app]) {
+                redirectUrl = APP_URL_MAPPING[sessionRelay.app];
+                console.log(`🎯 Mapped session app '${sessionRelay.app}' to URL: ${redirectUrl}`);
+            }
         }
 
-        console.log(`🔗 Redirecting to: ${returnUrl}`);
-        return res.redirect(returnUrl);
+        // Final fallback
+        if (!redirectUrl) {
+            redirectUrl = DEFAULT_APP_URL;
+            console.log(`🔄 No redirect URL determined, using default: ${redirectUrl}`);
+        }
+
+        console.log(`🚀 Final redirect URL: ${redirectUrl}`);
+        return res.redirect(redirectUrl);
 
     } catch (error) {
         console.error('❌ Error parsing SAML response:', error);
