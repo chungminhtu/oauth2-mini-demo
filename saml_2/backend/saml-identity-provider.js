@@ -1,24 +1,27 @@
 import express from 'express';
-import cookieSession from 'cookie-session';
-import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
+import session from 'express-session';
+import { IdentityProvider, ServiceProvider, setSchemaValidator } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
-import urlencoded from 'body-parser';
-import json from 'body-parser';
-import { randomUUID } from 'crypto';
-import { addMinutes } from 'date-fns';
 import cors from 'cors';
 
 const app = express();
-app.use(urlencoded({ extended: true }));
-app.use(json());
+
+// Middleware
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(cors({
-  origin: ['http://localhost:4003', 'http://localhost:4004'],
+  origin: ['http://localhost:4001', 'http://localhost:4003', 'http://localhost:4004'],
   credentials: true
 }));
-app.use(cookieSession({
-  name: 'idp_session',
-  keys: ['idp-secret-key'],
-  maxAge: 24 * 60 * 60 * 1000
+
+app.use(session({
+  secret: 'idp-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false,
+    maxAge: 24 * 60 * 60 * 1000
+  }
 }));
 
 setSchemaValidator(validator);
@@ -28,263 +31,371 @@ const users = {
   'john@example.com': {
     password: 'password123',
     givenName: 'John',
-    sn: 'Doe',
+    surname: 'Doe',
     email: 'john@example.com',
-    cn: 'John Doe',
-    uid: 'john',
-    mail: 'john@example.com',
     title: 'Senior Developer'
+  },
+  'jane@example.com': {
+    password: 'password456',
+    givenName: 'Jane',
+    surname: 'Smith',
+    email: 'jane@example.com',
+    title: 'Product Manager'
   }
 };
 
-// Better ID generation following the working code pattern
-const generateRequestID = () => {
-  return '_' + randomUUID();
+let idp, sp;
+
+// Initialize SAML
+function initializeSAML() {
+  // Create IdP
+  idp = IdentityProvider({
+    entityID: 'http://localhost:4002/idp/metadata',
+    singleSignOnService: [{
+      Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
+      Location: 'http://localhost:4002/idp/sso'
+    }]
+  });
+
+  // Create SP for parsing requests
+  sp = ServiceProvider({
+    entityID: 'http://localhost:4001/sp/metadata',
+    assertionConsumerService: [{
+      Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
+      Location: 'http://localhost:4001/sp/acs'
+    }]
+  });
+
+  console.log('✅ IdP SAML initialized');
 }
 
-// Template callback function similar to working code
-const createTemplateCallback = (idp, sp, user, inResponseTo = null) => template => {
-  const assertionConsumerServiceUrl = sp.entityMeta.getAssertionConsumerService('urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST');
-  const nameIDFormat = idp.entitySetting.nameIDFormat;
-  const selectedNameIDFormat = Array.isArray(nameIDFormat) ? nameIDFormat[0] : nameIDFormat;
+// Initialize on startup
+initializeSAML();
 
-  const id = generateRequestID();
-  const assertionId = generateRequestID();
-  const now = new Date();
-  const fiveMinutesLater = addMinutes(now, 5);
-
-  const tagValues = {
-    ID: id,
-    AssertionID: assertionId,
-    Destination: assertionConsumerServiceUrl,
-    Audience: sp.entityMeta.getEntityID(),
-    EntityID: sp.entityMeta.getEntityID(),
-    SubjectRecipient: assertionConsumerServiceUrl,
-    Issuer: idp.entityMeta.getEntityID(),
-    IssueInstant: now.toISOString(),
-    AssertionConsumerServiceURL: assertionConsumerServiceUrl,
-    StatusCode: 'urn:oasis:names:tc:SAML:2.0:status:Success',
-    ConditionsNotBefore: now.toISOString(),
-    ConditionsNotOnOrAfter: fiveMinutesLater.toISOString(),
-    SubjectConfirmationDataNotOnOrAfter: fiveMinutesLater.toISOString(),
-    NameIDFormat: selectedNameIDFormat,
-    NameID: user.email,
-    InResponseTo: inResponseTo || 'null',
-    // User attributes
-    firstName: user.givenName,
-    lastName: user.sn,
-    email: user.email,
-    commonName: user.cn,
-    title: user.title
-  };
-
-  return {
-    id,
-    context: template.replace(/{(\w+)}/g, (match, key) => tagValues[key] || match)
-  };
-}
-
-// IdP configuration with custom login response template
-const idp = IdentityProvider({
-  entityID: 'http://localhost:4002/idp/metadata',
-  wantAuthnRequestsSigned: false,
-  nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
-  singleSignOnService: [{
-    Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
-    Location: 'http://localhost:4002/idp/sso'
-  }],
-  loginResponseTemplate: {
-    context: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{ID}" Version="2.0" IssueInstant="{IssueInstant}" Destination="{Destination}" InResponseTo="{InResponseTo}">
-      <saml:Issuer>{Issuer}</saml:Issuer>
-      <samlp:Status>
-        <samlp:StatusCode Value="{StatusCode}"/>
-      </samlp:Status>
-      <saml:Assertion ID="{AssertionID}" Version="2.0" IssueInstant="{IssueInstant}">
-        <saml:Issuer>{Issuer}</saml:Issuer>
-        <saml:Subject>
-          <saml:NameID Format="{NameIDFormat}">{NameID}</saml:NameID>
-          <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
-            <saml:SubjectConfirmationData NotOnOrAfter="{SubjectConfirmationDataNotOnOrAfter}" Recipient="{SubjectRecipient}" InResponseTo="{InResponseTo}"/>
-          </saml:SubjectConfirmation>
-        </saml:Subject>
-        <saml:Conditions NotBefore="{ConditionsNotBefore}" NotOnOrAfter="{ConditionsNotOnOrAfter}">
-          <saml:AudienceRestriction>
-            <saml:Audience>{Audience}</saml:Audience>
-          </saml:AudienceRestriction>
-        </saml:Conditions>
-        <saml:AttributeStatement>
-          <saml:Attribute Name="urn:oid:2.5.4.42" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
-            <saml:AttributeValue>{firstName}</saml:AttributeValue>
-          </saml:Attribute>
-          <saml:Attribute Name="urn:oid:2.5.4.4" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
-            <saml:AttributeValue>{lastName}</saml:AttributeValue>
-          </saml:Attribute>
-          <saml:Attribute Name="urn:oid:1.3.6.1.4.1.5923.1.1.1.6" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
-            <saml:AttributeValue>{email}</saml:AttributeValue>
-          </saml:Attribute>
-          <saml:Attribute Name="urn:oid:2.5.4.3" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
-            <saml:AttributeValue>{commonName}</saml:AttributeValue>
-          </saml:Attribute>
-          <saml:Attribute Name="urn:oid:2.5.4.12" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
-            <saml:AttributeValue>{title}</saml:AttributeValue>
-          </saml:Attribute>
-        </saml:AttributeStatement>
-      </saml:Assertion>
-    </samlp:Response>`,
-    attributes: [
-      { name: 'firstName', valueTag: 'firstName', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
-      { name: 'lastName', valueTag: 'lastName', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
-      { name: 'email', valueTag: 'email', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
-      { name: 'commonName', valueTag: 'commonName', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
-      { name: 'title', valueTag: 'title', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
-    ]
-  }
+// Health check
+app.get('/', (req, res) => {
+  res.json({
+    service: 'SAML Identity Provider',
+    status: 'running',
+    version: '2.0.0',
+    endpoints: {
+      metadata: '/idp/metadata',
+      sso: '/idp/sso',
+      authenticate: '/idp/authenticate'
+    },
+    demoUsers: Object.keys(users)
+  });
 });
 
-// SP configuration
-const sp = ServiceProvider({
-  entityID: 'http://localhost:4001/sp/metadata',
-  authnRequestsSigned: false,
-  wantAssertionsSigned: false,
-  wantMessageSigned: false,
-  wantLogoutResponseSigned: false,
-  wantLogoutRequestSigned: false,
-  assertionConsumerService: [{
-    Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-    Location: 'http://localhost:4001/sp/acs',
-  }],
-  nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress']
-});
-
+// IdP Metadata
 app.get('/idp/metadata', (req, res) => {
-  res.header('Content-Type', 'text/xml').send(idp.getMetadata());
+  const metadata = idp.getMetadata();
+  res.set('Content-Type', 'text/xml');
+  res.send(metadata);
 });
 
+// SSO Endpoint
 app.get('/idp/sso', async (req, res) => {
-  const { SAMLRequest, RelayState } = req.query;
-
-  if (!SAMLRequest) {
-    return res.status(400).json({ error: 'Missing SAMLRequest parameter' });
-  }
-
   try {
     const { extract } = await idp.parseLoginRequest(sp, 'redirect', req);
 
-    const requestId = extract.request?.id || extract.id || generateRequestID();
+    // Store SAML request info
+    req.session.samlRequest = extract;
 
-    req.session.samlContext = {
-      extract: extract,
-      relayState: RelayState,
-      timestamp: Date.now(),
-      requestId: requestId
-    };
-
-    if (req.session.authenticatedUser) {
-      return handleAuthenticatedUser(req, res);
+    // If user already authenticated, proceed
+    if (req.session.user) {
+      return handleAuthentication(req, res);
     }
 
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-          <title>Demo SAML IdP - Login</title>
-          <style>
-              body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
-              input { width: 100%; padding: 8px; margin: 5px 0; box-sizing: border-box; }
-              button { background: #007bff; color: white; padding: 10px; border: none; width: 100%; cursor: pointer; }
-          </style>
-      </head>
-      <body>
-          <h2>🔐 Demo SAML Identity Provider</h2>
-          <form method="post" action="/idp/authenticate">
-              <input type="hidden" name="requestId" value="${requestId}">
-              <input type="hidden" name="relayState" value="${RelayState || ''}">
-              <label>Email:</label>
-              <input type="email" name="username" value="john@example.com" required>
-              <label>Password:</label>
-              <input type="password" name="password" value="password123" required>
-              <button type="submit">🚀 Login</button>
-          </form>
-          <p><small>Demo users: john@example.com (password: password123)</small></p>
-      </body>
-      </html>
-    `);
+    // Show login form
+    res.send(getLoginForm());
+
   } catch (error) {
-    console.error('❌ Error processing SAML AuthnRequest:', error);
-    res.status(500).json({ error: 'Failed to process SAML request' });
+    console.error('❌ SSO processing failed:', error);
+    res.status(500).json({
+      error: 'Failed to process SSO request',
+      details: error.message
+    });
   }
 });
 
+// Authentication
 app.post('/idp/authenticate', (req, res) => {
-  const { username, password, requestId } = req.body;
-  console.log(`🔐 Authentication attempt for user: ${username}, requestId: ${requestId}`);
+  const { username, password } = req.body;
 
   const user = users[username];
   if (!user || user.password !== password) {
-    console.log('❌ Invalid credentials');
-    return res.status(401).send(`
-      <html><body style="font-family: Arial; text-align: center;">
-          <h2>❌ Authentication Failed</h2>
-          <p>Invalid username or password.</p>
-          <a href="javascript:history.back()">Try Again</a>
-      </body></html>
-    `);
+    return res.status(401).send(getLoginForm('Invalid credentials'));
   }
 
-  console.log('✅ User authenticated successfully');
-  req.session.authenticatedUser = user;
-  handleAuthenticatedUser(req, res);
+  // Store user in session
+  req.session.user = user;
+
+  console.log('✅ User authenticated:', username);
+
+  // Handle SAML response
+  handleAuthentication(req, res);
 });
 
-// Enhanced function using the template callback pattern
-async function handleAuthenticatedUser(req, res) {
-  if (!req.session.samlContext) {
-    return res.status(400).json({ error: 'No SAML context found' });
+// Handle authentication and create SAML response
+function handleAuthentication(req, res) {
+  if (!req.session.samlRequest || !req.session.user) {
+    return res.status(400).json({ error: 'Invalid session state' });
   }
 
-  const user = req.session.authenticatedUser;
-  const { extract, relayState } = req.session.samlContext;
-
   try {
-    console.log('🔍 Creating login response for:', user.email);
+    const user = req.session.user;
+    const { extract } = req.session.samlRequest;
 
-    // Use the template callback approach from working code
-    const inResponseTo = extract.request?.id || extract.id;
-    const templateCallback = createTemplateCallback(idp, sp, user, inResponseTo);
-
-    // Create login response using the template callback
-    const loginResponse = await idp.createLoginResponse(
+    // Create SAML response
+    const { context } = idp.createLoginResponse(
       sp,
       extract,
       'post',
       user.email,
-      templateCallback
+      createTemplateCallback(user)
     );
-    // Clear SAML context
-    req.session.samlContext = null;
 
-    console.log('✅ SAML Response generated successfully');
+    // Clear SAML request from session
+    req.session.samlRequest = null;
 
+    console.log('✅ SAML response created');
+
+    // Send auto-submit form
     res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>SAML Response</title></head>
-      <body onload="document.forms[0].submit()">
-        <form method="post" action="http://localhost:4001/sp/acs">
-          <input type="hidden" name="SAMLResponse" value="${loginResponse.context}">
-          <input type="hidden" name="RelayState" value="${relayState || ''}">
-          <p>🔄 Redirecting back to Service Provider...</p>
-          <button type="submit">Continue</button>
-        </form>
-      </body>
-      </html>
-    `);
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Redirecting...</title>
+                <style>
+                    body { font-family: Arial; text-align: center; margin-top: 100px; }
+                    .loading { color: #007bff; }
+                </style>
+            </head>
+            <body onload="document.forms[0].submit()">
+                <div class="loading">
+                    <h3>✅ Authentication Successful</h3>
+                    <p>🔄 Redirecting back to application...</p>
+                </div>
+                <form method="post" action="http://localhost:4001/sp/acs">
+                    <input type="hidden" name="SAMLResponse" value="${context}">
+                    <button type="submit">Continue</button>
+                </form>
+            </body>
+            </html>
+        `);
+
   } catch (error) {
-    console.error('❌ Error generating SAML Response:', error);
-    res.status(500).json({ error: 'Failed to generate SAML response' });
+    console.error('❌ SAML response creation failed:', error);
+    res.status(500).json({
+      error: 'Failed to create SAML response',
+      details: error.message
+    });
   }
 }
 
+// Template callback for SAML response
+function createTemplateCallback(user) {
+  return (template) => {
+    const now = new Date();
+    const id = '_' + Math.random().toString(36).substr(2, 9);
+
+    const templateMap = {
+      ID: id,
+      AssertionID: '_' + Math.random().toString(36).substr(2, 9),
+      Issuer: 'http://localhost:4002/idp/metadata',
+      IssueInstant: now.toISOString(),
+      NotBefore: now.toISOString(),
+      NotOnOrAfter: new Date(now.getTime() + 300000).toISOString(), // 5 minutes
+      Audience: 'http://localhost:4001/sp/metadata',
+      InResponseTo: template.context?.extract?.request?.id || '',
+      Recipient: 'http://localhost:4001/sp/acs',
+      NameID: user.email,
+      NameIDFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+      AuthnInstant: now.toISOString(),
+      SessionIndex: id,
+      // User attributes
+      'attrName:givenName': 'givenName',
+      'attrValue:givenName': user.givenName,
+      'attrName:surname': 'surname',
+      'attrValue:surname': user.surname,
+      'attrName:email': 'email',
+      'attrValue:email': user.email,
+      'attrName:title': 'title',
+      'attrValue:title': user.title
+    };
+
+    let processedTemplate = template.context || template;
+
+    Object.keys(templateMap).forEach(key => {
+      const regex = new RegExp(`{${key}}`, 'g');
+      processedTemplate = processedTemplate.replace(regex, templateMap[key]);
+    });
+
+    return processedTemplate;
+  };
+}
+
+// Get login form HTML
+function getLoginForm(error = '') {
+  return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>SAML Identity Provider - Sign In</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    background: #f5f5f5;
+                    margin: 0;
+                    padding: 50px 20px;
+                }
+                .container {
+                    max-width: 400px;
+                    margin: 0 auto;
+                    background: white;
+                    padding: 40px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                }
+                h2 {
+                    text-align: center;
+                    color: #333;
+                    margin-bottom: 30px;
+                }
+                .form-group {
+                    margin-bottom: 20px;
+                }
+                label {
+                    display: block;
+                    margin-bottom: 5px;
+                    font-weight: bold;
+                    color: #555;
+                }
+                input[type="email"], input[type="password"] {
+                    width: 100%;
+                    padding: 12px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    box-sizing: border-box;
+                }
+                button {
+                    width: 100%;
+                    background: #007bff;
+                    color: white;
+                    padding: 12px;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 16px;
+                    cursor: pointer;
+                    transition: background 0.3s;
+                }
+                button:hover {
+                    background: #0056b3;
+                }
+                .error {
+                    color: #dc3545;
+                    text-align: center;
+                    margin-bottom: 20px;
+                    padding: 10px;
+                    background: #f8d7da;
+                    border: 1px solid #f5c6cb;
+                    border-radius: 4px;
+                }
+                .demo-users {
+                    background: #e9ecef;
+                    padding: 20px;
+                    border-radius: 4px;
+                    margin-top: 30px;
+                    font-size: 14px;
+                }
+                .demo-users h4 {
+                    margin-top: 0;
+                    color: #495057;
+                }
+                .user-item {
+                    margin: 8px 0;
+                    font-family: monospace;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>🔐 Identity Provider</h2>
+                <p style="text-align: center; color: #666;">Please sign in to continue</p>
+                
+                ${error ? `<div class="error">${error}</div>` : ''}
+                
+                <form method="post" action="/idp/authenticate">
+                    <div class="form-group">
+                        <label for="username">Email Address:</label>
+                        <input type="email" id="username" name="username" value="john@example.com" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" name="password" value="password123" required>
+                    </div>
+                    
+                    <button type="submit">🚀 Sign In</button>
+                </form>
+                
+                <div class="demo-users">
+                    <h4>📋 Demo Users Available:</h4>
+                    <div class="user-item">👤 john@example.com / password123</div>
+                    <div class="user-item">👤 jane@example.com / password456</div>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+}
+
+// Status endpoint
+app.get('/idp/status', (req, res) => {
+  res.json({
+    service: 'SAML Identity Provider',
+    status: 'running',
+    version: '2.0.0',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      metadata: '/idp/metadata',
+      sso: '/idp/sso',
+      authenticate: '/idp/authenticate'
+    },
+    demoUsers: Object.keys(users),
+    activeSession: !!req.session.user
+  });
+});
+
+// Logout
+app.get('/idp/logout', (req, res) => {
+  req.session.destroy();
+  res.send(`
+        <html>
+        <body style="font-family: Arial; text-align: center; margin-top: 100px;">
+            <div style="max-width: 400px; margin: 0 auto; padding: 30px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <h2>✅ Logged Out</h2>
+                <p>You have been successfully logged out.</p>
+                <a href="/idp/status" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">View Status</a>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
+// Start IdP server
 app.listen(4002, () => {
   console.log('🔐 SAML Identity Provider running on http://localhost:4002');
+  console.log('📋 Endpoints available:');
+  console.log('   - GET  /idp/metadata');
+  console.log('   - GET  /idp/sso');
+  console.log('   - POST /idp/authenticate');
+  console.log('   - GET  /idp/status');
+  console.log('   - GET  /idp/logout');
+  console.log('👥 Demo users:');
+  Object.entries(users).forEach(([email, user]) => {
+    console.log(`   - ${email} / ${user.password} (${user.givenName} ${user.surname})`);
+  });
 });
