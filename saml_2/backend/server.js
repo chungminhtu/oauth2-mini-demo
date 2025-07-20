@@ -139,7 +139,7 @@ app.post('/sp/acs', (req, res) => {
         console.log('✅ User session created for:', nameId);
 
         // Handle redirect based on RelayState
-        let returnUrl = 'http://localhost:4004'; // default
+        let returnUrl = 'http://localhost:4003'; // Change default to app3
 
         if (relayState) {
             try {
@@ -155,7 +155,10 @@ app.post('/sp/acs', (req, res) => {
                 }
             } catch (e) {
                 console.log('⚠️ Could not parse RelayState as JSON, using default');
+                console.log('RelayState value:', relayState);
             }
+        } else {
+            console.log('⚠️ No RelayState provided, using default app3 URL');
         }
 
         console.log(`🔗 Redirecting to: ${returnUrl}`);
@@ -281,6 +284,107 @@ app.get('/api/protected/app4', (req, res) => {
     });
 });
 
+// Single Logout initiation endpoint
+app.get('/sp/slo/initiate', (req, res) => {
+  console.log('🚪 Initiating SAML Single Logout...');
+  
+  if (!req.session.loggedIn || !req.session.user) {
+    return res.json({ message: 'No active session to logout' });
+  }
+  
+  const logoutRequestId = '_' + uuidv4();
+  const issueInstant = new Date().toISOString();
+  const nameId = req.session.user.email || req.session.samlAssertion?.subject;
+  
+  const logoutRequest = `<?xml version="1.0" encoding="UTF-8"?>
+  <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                       xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                       ID="${logoutRequestId}"
+                       Version="2.0"
+                       IssueInstant="${issueInstant}"
+                       Destination="http://localhost:4002/idp/slo">
+      <saml:Issuer>http://localhost:4001/sp/metadata</saml:Issuer>
+      <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${nameId}</saml:NameID>
+  </samlp:LogoutRequest>`;
+  
+  const samlRequest = Buffer.from(logoutRequest).toString('base64');
+  const relayState = JSON.stringify({ action: 'slo', timestamp: Date.now() });
+  
+  // Create auto-submit form to IdP
+  const html = `<html>
+      <body onload="document.forms[0].submit()">
+          <form method="GET" action="http://localhost:4002/idp/slo">
+              <input type="hidden" name="SAMLRequest" value="${samlRequest}" />
+              <input type="hidden" name="RelayState" value="${relayState}" />
+          </form>
+          <p>🔄 Initiating Single Logout...</p>
+      </body>
+  </html>`;
+
+  res.send(html);
+});
+
+// Single Logout Response handler
+app.post('/sp/slo', (req, res) => {
+  console.log('📥 Received SAML Logout Response...');
+  
+  const { SAMLResponse, RelayState } = req.body;
+  
+  if (!SAMLResponse) {
+    return res.status(400).json({ error: 'Missing SAMLResponse' });
+  }
+
+  try {
+    // Decode and parse the logout response
+    const logoutResponse = Buffer.from(SAMLResponse, 'base64').toString('utf8');
+    console.log('🔍 Parsing logout response...');
+    
+    // Check if logout was successful (simple check for Success status)
+    if (logoutResponse.includes('urn:oasis:names:tc:SAML:2.0:status:Success')) {
+      console.log('✅ Logout successful according to IdP');
+      
+      // Clear the session
+      req.session.destroy(err => {
+        if (err) {
+          console.error('Error destroying session:', err);
+        }
+      });
+      
+      // Redirect to a logout success page
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Logout Successful</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+            .success { background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px auto; max-width: 500px; }
+          </style>
+        </head>
+        <body>
+          <div class="success">
+            <h2>🎉 Logout Successful</h2>
+            <p>You have been successfully logged out from all applications.</p>
+            <div style="margin-top: 20px;">
+              <a href="http://localhost:4003" style="margin: 0 10px; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 3px;">Go to App 3</a>
+              <a href="http://localhost:4004" style="margin: 0 10px; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 3px;">Go to App 4</a>
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+      
+    } else {
+      console.log('❌ Logout failed according to IdP');
+      res.status(500).json({ error: 'Logout failed' });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error processing logout response:', error);
+    res.status(500).json({ error: 'Failed to process logout response' });
+  }
+});
+
 // SP metadata endpoint
 app.get('/sp/metadata', (req, res) => {
     const metadata = `<?xml version="1.0" encoding="UTF-8"?>
@@ -293,6 +397,8 @@ app.get('/sp/metadata', (req, res) => {
                                          Location="${SP_ACS_URL}" 
                                          index="0" 
                                          isDefault="true"/>
+            <md:SingleLogoutService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                                  Location="http://localhost:4001/sp/slo"/>
         </md:SPSSODescriptor>
     </md:EntityDescriptor>`;
 

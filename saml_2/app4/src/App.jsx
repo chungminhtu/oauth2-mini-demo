@@ -41,7 +41,7 @@ const App = () => {
       });
       setPrivateData(response.data);
     } catch (error) {
-      console.error('Error fetching private data:', error.response?.data || error.message);
+      console.error('Error fetching private data:', error);
       if (error.response && error.response.status === 401) {
         alert('Your SAML session has expired. Please log in again.');
         setSamlSession(null);
@@ -59,6 +59,26 @@ const App = () => {
       console.error('Error with fake token:', error.response?.data || error.message);
       alert('As expected, the request with a fake token was rejected.');
     }
+  };
+
+  // CORRECTED logout functions for App4
+  const handleLogout = async () => {
+    try {
+      await axios.get(`${SAML_BACKEND}/sp/logout`, {
+        withCredentials: true
+      });
+      // App4 uses this state variable:
+      setSamlSession(null);
+      setPrivateData(null);
+      console.log('✅ Local logout successful');
+    } catch (error) {
+      console.error('Error during logout:', error);
+    }
+  };
+
+  const handleSingleLogout = () => {
+    console.log('🔐 Initiating SAML Single Logout...');
+    window.location.href = `${SAML_BACKEND}/sp/slo/initiate`;
   };
   
   if (loading) {

@@ -8,8 +8,8 @@
     "app1": "vite --open",
     "app2": "vite --config app2/vite.config.js",
     "-------": "-----------",
-    "saml-backend": "NODE_ENV=dev nodemon saml_2/backend/server.js",
     "saml-idp": "NODE_ENV=dev nodemon saml_2/backend/saml-identity-provider.js",
+    "saml-backend": "NODE_ENV=dev nodemon saml_2/backend/server.js",
     "app3": "vite --config saml_2/app3/vite.config.js",
     "app4": "vite --config saml_2/app4/vite.config.js"
   },
