@@ -8,15 +8,12 @@ import { v4 as uuidv4 } from 'uuid';
 import cors from 'cors';
 
 const app = express();
-
 app.use(urlencoded({ extended: true }));
 app.use(json());
-
 app.use(cors({
   origin: ['http://localhost:4003', 'http://localhost:4004'],
   credentials: true
 }));
-
 app.use(cookieSession({
   name: 'idp_session',
   keys: ['idp-secret-key'],
@@ -75,15 +72,16 @@ app.get('/idp/metadata', (req, res) => {
 // SAML SSO endpoint
 app.get('/idp/sso', async (req, res) => {
   const { SAMLRequest, RelayState } = req.query;
+
   if (!SAMLRequest) {
     return res.status(400).json({ error: 'Missing SAMLRequest parameter' });
   }
 
   try {
     const { extract } = await idp.parseLoginRequest(sp, 'redirect', req);
-
     console.log('Query:', req.query);
     console.log('Extracted data:', extract);
+
     const requestId = extract.request?.id || extract.id || `_${uuidv4()}`;
 
     samlRequestStore.set(requestId, {
@@ -125,7 +123,6 @@ app.get('/idp/sso', async (req, res) => {
             </body>
             </html>
         `);
-
   } catch (error) {
     console.error('❌ Error processing SAML AuthnRequest:', error);
     res.status(500).json({ error: 'Failed to process SAML request' });
@@ -135,7 +132,6 @@ app.get('/idp/sso', async (req, res) => {
 // Authentication processing
 app.post('/idp/authenticate', (req, res) => {
   const { username, password, requestId } = req.body;
-
   console.log(`🔐 Authentication attempt for user: ${username}`);
 
   const user = users[username];
@@ -155,10 +151,9 @@ app.post('/idp/authenticate', (req, res) => {
   generateAndSendSAMLResponse(user, requestId, res);
 });
 
-// Generate SAML Response
-const generateAndSendSAMLResponse = (user, requestId, res) => {
+// Generate SAML Response - FIXED VERSION
+const generateAndSendSAMLResponse = async (user, requestId, res) => {
   const requestContext = samlRequestStore.get(requestId);
-
   if (!requestContext) {
     return res.status(400).json({ error: 'Invalid SAML request' });
   }
@@ -169,27 +164,29 @@ const generateAndSendSAMLResponse = (user, requestId, res) => {
     // User attributes matching the SP's INVERSE_ATTRIBUTE_MAP
     const userAttributes = {
       'urn:oid:1.3.6.1.4.1.5923.1.1.1.6': user.email,     // email
-      'urn:oid:2.5.4.3': user.cn,                          // cn  
+      'urn:oid:2.5.4.3': user.cn,                          // cn        
       'urn:oid:2.5.4.4': user.sn,                          // sn
       'urn:oid:2.5.4.42': user.givenName,                  // givenName
       'urn:oid:0.9.2342.19200300.100.1.3': user.mail,     // mail
       'urn:oid:2.5.4.12': user.title                       // title
     };
 
-    const { context: samlResponse } = idp.createLoginResponse(
-      sp,
-      requestContext.extract,
-      'post',
-      user.email, // Subject/NameID
-      userAttributes,
-      false, // Not encrypted
-      requestContext.relayState
+    // Create the SAML Response - Correct parameter order for samlify v2.x
+    const loginResponse = await idp.createLoginResponse(
+      sp,                              // Service Provider
+      requestContext.extract,          // Original AuthN request (extract)
+      'post',                          // Binding type
+      user.email,                      // NameID (subject)
+      userAttributes                   // User attributes
     );
 
-    samlRequestStore.delete(requestId);
-    console.log(`✅ SAML Response generated and sending to SP`);
+    // Extract the context (base64-encoded SAMLResponse)
+    const samlResponse = loginResponse.context;
 
-    // Send SAML Response via POST binding
+    samlRequestStore.delete(requestId);
+    console.log(`✅ SAML Response generated successfully`);
+
+    // Send SAML Response via POST binding to SP's ACS
     res.send(`
             <!DOCTYPE html>
             <html>
@@ -204,9 +201,9 @@ const generateAndSendSAMLResponse = (user, requestId, res) => {
             </body>
             </html>
         `);
-
   } catch (error) {
     console.error('❌ Error generating SAML Response:', error);
+    console.error('Error details:', error.message);
     res.status(500).json({ error: 'Failed to generate SAML response' });
   }
 };
