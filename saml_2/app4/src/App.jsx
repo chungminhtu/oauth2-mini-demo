@@ -38,8 +38,13 @@ const App = () => {
   };
 
   const handleSamlLogin = () => {
+    // More explicit RelayState for app4
     const returnUrl = encodeURIComponent(window.location.href);
-    window.location.href = `${SAML_BACKEND}/sp/sso/initiate?app=${APP_NAME}&returnUrl=${returnUrl}`;
+    const loginUrl = `${SAML_BACKEND}/sp/sso/initiate?app=app4&returnUrl=${returnUrl}`;
+    
+    console.log('🚀 App4 initiating SAML login:', loginUrl);
+    console.log('🎯 Expected redirect back to:', window.location.href);
+    window.location.href = loginUrl;
   };
 
   const fetchPrivateData = async () => {

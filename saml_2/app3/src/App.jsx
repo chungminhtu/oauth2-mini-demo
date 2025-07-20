@@ -40,8 +40,12 @@ const App = () => {
   };
 
   const handleSAMLLogin = () => {
+    // More explicit RelayState for app3
     const returnUrl = encodeURIComponent(window.location.href);
-    window.location.href = `${SAML_BACKEND}/sp/sso/initiate?app=app3&returnUrl=${returnUrl}`;
+    const loginUrl = `${SAML_BACKEND}/sp/sso/initiate?app=app3&returnUrl=${returnUrl}`;
+    
+    console.log('🚀 App3 initiating SAML login:', loginUrl);
+    window.location.href = loginUrl;
   };
 
   const fetchPrivateData = async () => {
