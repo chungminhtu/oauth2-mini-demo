@@ -13,7 +13,7 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
     const IDP_BASE_URL = 'http://localhost:4002';
     const SP_BASE_URL = 'http://localhost:4001';
     const TEST_USER = {
-        username: 'john@example.com',
+        email: 'john@example.com', // Changed from username to email
         password: 'password123'
     };
 
@@ -32,6 +32,10 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
         // Monitor IdP logs for debugging
         idpServer.stderr?.on('data', (data) => {
             console.log('IdP Error:', data.toString());
+        });
+
+        idpServer.stdout?.on('data', (data) => {
+            console.log('IdP Log:', data.toString());
         });
 
         // Wait for IdP
@@ -57,6 +61,10 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
             console.log('SP Error:', data.toString());
         });
 
+        spServer.stdout?.on('data', (data) => {
+            console.log('SP Log:', data.toString());
+        });
+
         // Wait for SP
         console.log('⏳ Waiting for SP server...');
         for (let i = 0; i < 30; i++) {
@@ -78,50 +86,67 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
 
     it('should complete full SAML authentication flow successfully', async () => {
         try {
-            // Step 1: SP initiates SAML SSO
+            // Step 1: SP initiates SAML SSO - this now returns HTML with auto-submit form
             console.log('🚀 Step 1: Initiating SAML SSO...');
             const ssoResponse = await client.get(`${SP_BASE_URL}/sp/sso/initiate`, {
-                params: { app: 'app3', returnUrl: 'http://localhost:4003' },
-                maxRedirects: 0,
-                validateStatus: status => status === 302
+                params: { app: 'app3', returnUrl: 'http://localhost:4003' }
             });
 
-            expect(ssoResponse.status).toBe(302);
-            const idpLoginUrl = ssoResponse.headers.location;
-            console.log('IdP Login URL:', idpLoginUrl);
+            expect(ssoResponse.status).toBe(200);
+            console.log('SSO initiation response received, length:', ssoResponse.data.length);
 
-            const loginUrl = new URL(idpLoginUrl);
-            const relayState = loginUrl.searchParams.get('RelayState');
-            console.log('RelayState:', relayState);
+            // Extract the SAMLRequest and RelayState from the auto-submit form
+            const ssoDom = new JSDOM(ssoResponse.data);
+            const samlRequestInput = ssoDom.window.document.querySelector('input[name="SAMLRequest"]') as HTMLInputElement;
+            const relayStateInput = ssoDom.window.document.querySelector('input[name="RelayState"]') as HTMLInputElement;
 
-            // Step 2: Get login form from IdP (with cookies)
-            console.log('🔐 Step 2: Getting login form from IdP...');
-            const loginFormResponse = await client.get(idpLoginUrl);
+            const samlRequest = samlRequestInput?.value;
+            const relayState = relayStateInput?.value;
+
+            console.log('SAMLRequest extracted:', !!samlRequest);
+            console.log('RelayState extracted:', relayState);
+
+            expect(samlRequest).toBeTruthy();
+
+            // Step 2: Submit SAMLRequest to IdP SSO endpoint
+            console.log('🔐 Step 2: Submitting SAMLRequest to IdP...');
+            const idpSsoData = new URLSearchParams({
+                SAMLRequest: samlRequest!,
+                RelayState: relayState || ''
+            });
+
+            const loginFormResponse = await client.post(`${IDP_BASE_URL}/idp/sso`, idpSsoData.toString(), {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
 
             expect(loginFormResponse.status).toBe(200);
             console.log('Login form received, length:', loginFormResponse.data.length);
 
-            // Extract requestId from form
-            const dom = new JSDOM(loginFormResponse.data);
-            const requestIdInput = dom.window.document.querySelector('input[name="requestId"]') as HTMLInputElement;
-            const requestId = requestIdInput?.value;
+            // Extract SAMLRequest and RelayState from the login form
+            const loginDom = new JSDOM(loginFormResponse.data);
+            const hiddenSamlRequestInput = loginDom.window.document.querySelector('input[name="SAMLRequest"]') as HTMLInputElement;
+            const hiddenRelayStateInput = loginDom.window.document.querySelector('input[name="RelayState"]') as HTMLInputElement;
 
-            console.log('RequestId extracted:', requestId);
-            expect(requestId).toBeTruthy();
+            const hiddenSamlRequest = hiddenSamlRequestInput?.value;
+            const hiddenRelayState = hiddenRelayStateInput?.value;
 
-            // Step 3: Submit credentials with proper form data
+            console.log('Hidden SAMLRequest extracted:', !!hiddenSamlRequest);
+            console.log('Hidden RelayState extracted:', hiddenRelayState);
+
+            expect(hiddenSamlRequest).toBeTruthy();
+
+            // Step 3: Submit credentials to IdP login endpoint
             console.log('🔑 Step 3: Submitting credentials to IdP...');
-
             const formData = new URLSearchParams({
-                username: TEST_USER.username,
+                email: TEST_USER.email, // Changed from username to email
                 password: TEST_USER.password,
-                requestId: requestId!,
-                relayState: relayState || ''
+                SAMLRequest: hiddenSamlRequest!, // Use the hidden SAMLRequest
+                RelayState: hiddenRelayState || ''
             });
 
-            console.log('Form data:', formData.toString());
+            console.log('Form data fields:', Array.from(formData.keys()));
 
-            const authResponse = await client.post(`${IDP_BASE_URL}/idp/authenticate`,
+            const authResponse = await client.post(`${IDP_BASE_URL}/idp/login`, // Changed from /idp/authenticate to /idp/login
                 formData.toString(),
                 {
                     headers: {
@@ -137,7 +162,7 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
             expect(authResponse.status).toBe(200);
             expect(authResponse.data).toContain('SAMLResponse');
 
-            // Step 4: Extract SAMLResponse
+            // Step 4: Extract SAMLResponse from the auto-submit form
             const responseDom = new JSDOM(authResponse.data);
             const samlResponseInput = responseDom.window.document.querySelector('input[name="SAMLResponse"]') as HTMLInputElement;
             const finalRelayStateInput = responseDom.window.document.querySelector('input[name="RelayState"]') as HTMLInputElement;
@@ -150,9 +175,8 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
 
             expect(samlResponse).toBeTruthy();
 
-            // Step 5: Submit to SP ACS
-            console.log('📨 Step 4: Posting SAMLResponse to SP ACS...');
-
+            // Step 5: Submit SAMLResponse to SP ACS
+            console.log('📨 Step 5: Posting SAMLResponse to SP ACS...');
             const acsData = new URLSearchParams({
                 SAMLResponse: samlResponse!,
                 RelayState: finalRelayState || ''
@@ -171,7 +195,7 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
             console.log('ACS redirect location:', acsResponse.headers.location);
 
             // Step 6: Verify session
-            console.log('🔍 Step 5: Verifying SAML session...');
+            console.log('🔍 Step 6: Verifying SAML session...');
             const sessionResponse = await client.get(`${SP_BASE_URL}/sp/session/status`);
 
             expect(sessionResponse.status).toBe(200);
@@ -180,7 +204,7 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
             console.log('Session data:', JSON.stringify(sessionResponse.data, null, 2));
 
             // Step 7: Access protected resource
-            console.log('🛡️ Step 6: Accessing protected resource...');
+            console.log('🛡️ Step 7: Accessing protected resource...');
             const protectedResponse = await client.get(`${SP_BASE_URL}/api/protected/app3`);
 
             expect(protectedResponse.status).toBe(200);
@@ -189,6 +213,18 @@ describe('SAML 2.0 Successful Authentication Flow', () => {
 
             console.log('🎉 SAML authentication flow completed successfully!');
             console.log('Protected data:', JSON.stringify(protectedResponse.data, null, 2));
+
+            // Step 8: Test logout
+            console.log('🚪 Step 8: Testing logout...');
+            const logoutResponse = await client.get(`${SP_BASE_URL}/sp/logout`);
+            expect(logoutResponse.status).toBe(200);
+
+            // Step 9: Verify logout worked
+            console.log('🔍 Step 9: Verifying logout...');
+            const postLogoutSession = await client.get(`${SP_BASE_URL}/sp/session/status`);
+            expect(postLogoutSession.data.authenticated).toBe(false);
+
+            console.log('✅ Logout verified successfully');
 
         } catch (error) {
             console.error('❌ Test failed with error:', error.stack);

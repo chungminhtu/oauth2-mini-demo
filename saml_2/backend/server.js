@@ -1,234 +1,151 @@
 import express from 'express';
-import cookieSession from 'cookie-session';
-import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
-import validator from '@authenio/samlify-node-xmllint';
+import session from 'express-session';
 import urlencoded from 'body-parser';
 import json from 'body-parser';
-import { randomUUID } from 'crypto';
-import { addMinutes } from 'date-fns';
+import { v4 as uuidv4 } from 'uuid';
+import { DOMParser } from '@xmldom/xmldom';
 import cors from 'cors';
-import axios from 'axios';
 
 const app = express();
+const PORT = 4001;
+const IDP_SSO_URL = 'http://localhost:4002/idp/sso';
+const SP_ENTITY_ID = 'http://localhost:4001/sp/metadata';
+const SP_ACS_URL = 'http://localhost:4001/sp/acs';
 
-app.use(urlencoded({ extended: true }));
-app.use(json());
 app.use(cors({
     origin: ['http://localhost:4003', 'http://localhost:4004'],
     credentials: true
 }));
 
-app.use(cookieSession({
-    name: 'sp_session',
-    keys: ['sp-secret-key'],
-    maxAge: 24 * 60 * 60 * 1000
+app.use(urlencoded({ extended: true }));
+app.use(json());
+app.use(session({
+    secret: 'sp-secret-key-for-saml',
+    resave: false,
+    saveUninitialized: true,
+    cookie: {
+        secure: false,
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
 }));
 
-// Set the validator
-setSchemaValidator(validator);
+// SSO Initiation endpoint (mapped from your /login-post)
+app.get('/sp/sso/initiate', (req, res) => {
+    const { app: appName, returnUrl } = req.query;
+    console.log(`🚀 Initiating SAML login for app: ${appName}`);
+    console.log(`🔗 Return URL: ${returnUrl}`);
 
-// ATTRIBUTE MAPPING
-const INVERSE_ATTRIBUTE_MAP = {
-    'urn:oid:1.3.6.1.4.1.5923.1.1.1.6': 'email',
-    'urn:oid:2.5.4.3': 'cn',
-    'urn:oid:2.5.4.4': 'sn',
-    'urn:oid:2.5.4.42': 'givenName',
-    'urn:oid:2.16.840.1.113730.3.1.241': 'displayName',
-    'urn:oid:0.9.2342.19200300.100.1.1': 'uid',
-    'urn:oid:0.9.2342.19200300.100.1.3': 'mail',
-    'urn:oid:2.5.4.20': 'telephoneNumber',
-    'urn:oid:2.5.4.12': 'title'
-};
+    const id = '_' + uuidv4();
+    const issueInstant = new Date().toISOString();
 
-const generateRequestID = () => {
-    return '_' + randomUUID();
-};
-
-const URI_IDP_METADATA = 'http://localhost:4002/idp/metadata';
-
-// Initialize SP and IdP
-let sp, idp;
-
-async function initializeSAML() {
-    try {
-        console.log('📡 Fetching IdP metadata...');
-        const response = await axios.get(URI_IDP_METADATA);
-        console.log('✅ Successfully fetched IdP metadata');
-
-        // Create IdP from metadata
-        idp = IdentityProvider({
-            metadata: response.data,
-            wantAuthnRequestsSigned: false
-        });
-
-        // Create SP configuration
-        sp = ServiceProvider({
-            entityID: 'http://localhost:4001/sp/metadata',
-            authnRequestsSigned: false,
-            wantAssertionsSigned: false,
-            wantMessageSigned: false,
-            wantLogoutResponseSigned: false,
-            wantLogoutRequestSigned: false,
-            assertionConsumerService: [{
-                Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-                Location: 'http://localhost:4001/sp/acs',
-            }],
-            nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
-            loginRequestTemplate: {
-                context: `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{ID}" Version="2.0" IssueInstant="{IssueInstant}" Destination="{Destination}" ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" AssertionConsumerServiceURL="{AssertionConsumerServiceURL}">
-                  <saml:Issuer>{Issuer}</saml:Issuer>
-                  <samlp:NameIDPolicy Format="{NameIDFormat}" AllowCreate="true"/>
-                </samlp:AuthnRequest>`
-            }
-        });
-
-        console.log('✅ SAML SP and IdP initialized successfully');
-        return true;
-    } catch (error) {
-        console.error('❌ Failed to initialize SAML:', error.message);
-        return false;
-    }
-}
-
-// SSO Initiation endpoint
-app.get('/sp/sso/initiate', async (req, res) => {
-    const { app: appId, returnUrl } = req.query;
-
-    if (!sp) {
-        console.error('❌ SP not initialized');
-        return res.status(500).json({ error: 'Service Provider not initialized' });
-    }
-
-    try {
-        console.log(`🚀 Initiating SAML SSO for app: ${appId}`);
-        console.log(`📋 Return URL: ${returnUrl}`);
-
-        // Create login request with template callback
-        const templateCallback = createTemplateCallback();
-        const { id, context } = sp.createLoginRequest(
-            idpInstance,
-            'redirect',
-            templateCallback
-        );
-
-        req.session.samlRequestId = id;
-        req.session.appId = appId;
-        req.session.returnUrl = returnUrl;
-        req.session.timestamp = Date.now();
-
-        console.log('✅ SAML AuthnRequest created');
-        console.log('📋 Request ID:', id);
-        console.log('🔗 Redirecting to:', context);
-
-        res.redirect(context);
-    } catch (error) {
-        console.error('❌ Error creating SAML AuthnRequest:', error);
-        res.status(500).json({
-            error: 'Failed to initiate SSO',
-            details: error.message
-        });
-    }
-});
-
-// Fix the template callback function for SP (around line 50-80)
-const createTemplateCallback = () => template => {
-    const id = generateRequestID();
-    const now = new Date();
-
-    const tagValues = {
-        ID: id,
-        Destination: 'http://localhost:4002/idp/sso',
-        Issuer: 'http://localhost:4001/sp/metadata',
-        IssueInstant: now.toISOString(),
-        AssertionConsumerServiceURL: 'http://localhost:4001/sp/acs',
-        ProtocolBinding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST'
+    // Store the relay state in session
+    req.session.relayState = {
+        app: appName,
+        returnUrl: returnUrl,
+        timestamp: new Date().toISOString(),
+        requestId: id
     };
 
-    // For SP, we need to return the template string directly
-    return template.replace(/{(\w+)}/g, (match, key) => tagValues[key] || match);
-};
+    const authnRequest = `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+        xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+        ID="${id}"
+        Version="2.0"
+        IssueInstant="${issueInstant}"
+        Destination="${IDP_SSO_URL}"
+        AssertionConsumerServiceURL="${SP_ACS_URL}"
+        ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
+        <saml:Issuer>${SP_ENTITY_ID}</saml:Issuer>
+    </samlp:AuthnRequest>`;
 
-// SP configuration - update the loginRequestTemplate
-const spConfig = {
-    entityID: 'http://localhost:4001/sp/metadata',
-    authnRequestsSigned: false,
-    wantAssertionsSigned: false,
-    wantMessageSigned: false,
-    wantLogoutResponseSigned: false,
-    wantLogoutRequestSigned: false,
-    assertionConsumerService: [{
-        Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
-        Location: 'http://localhost:4001/sp/acs',
-    }],
-    nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
-    // Add the login request template
-    loginRequestTemplate: {
-        context: `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="{ID}" Version="2.0" IssueInstant="{IssueInstant}" Destination="{Destination}" ProtocolBinding="{ProtocolBinding}" AssertionConsumerServiceURL="{AssertionConsumerServiceURL}">
-            <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">{Issuer}</saml:Issuer>
-        </samlp:AuthnRequest>`
-    }
-};
+    const samlRequest = Buffer.from(authnRequest).toString('base64');
+    const relayStateParam = JSON.stringify({
+        app: appName,
+        returnUrl: returnUrl
+    });
 
-// ACS endpoint
-app.post('/sp/acs', async (req, res) => {
-    if (!sp || !idp) {
-        return res.status(500).json({ error: 'SAML not initialized' });
-    }
+    const html = `<html>
+        <body onload="document.forms[0].submit()">
+            <form method="POST" action="${IDP_SSO_URL}">
+                <input type="hidden" name="SAMLRequest" value="${samlRequest}" />
+                <input type="hidden" name="RelayState" value="${relayStateParam}" />
+            </form>
+            <p>🔄 Redirecting to Identity Provider...</p>
+        </body>
+    </html>`;
 
+    res.send(html);
+});
+
+// ACS endpoint (mapped from your /assert)
+app.post('/sp/acs', (req, res) => {
     console.log('📥 Received /sp/acs post request...');
     console.log('📋 Request body keys:', Object.keys(req.body));
+    console.log('📋 SAMLResponse present:', !!req.body.SAMLResponse);
 
     const relayState = req.body.RelayState;
     console.log('📋 Relay state:', relayState);
 
     if (!req.body.SAMLResponse) {
-        console.error('❌ Invalid or missing SAMLResponse');
+        console.error('❌ Missing SAMLResponse');
         return res.status(400).json({
-            error: 'Invalid SAMLResponse received',
-            receivedKeys: Object.keys(req.body)
+            error: 'Missing SAMLResponse'
         });
     }
 
     try {
+        const samlResponse = Buffer.from(req.body.SAMLResponse, 'base64').toString('utf8');
         console.log('🔍 Parsing SAML Response...');
-        const { extract } = await sp.parseLoginResponse(idp, 'post', req);
+
+        const doc = new DOMParser().parseFromString(samlResponse, 'text/xml');
+        const nameId = doc.getElementsByTagName('saml:NameID')[0]?.textContent;
+
+        if (!nameId) {
+            console.error('❌ No NameID found in SAML response');
+            return res.status(401).send("Authentication failed - no NameID");
+        }
+
         console.log('✅ SAML Response parsed successfully');
-        console.log('📋 Extract keys:', Object.keys(extract));
-        console.log('📋 NameID:', extract.nameID);
+        console.log('📋 NameID:', nameId);
 
-        req.session.loggedIn = true;
-
-        // Process attributes
+        // Extract attributes if present
         const attributes = {};
-        if (extract.attributes) {
-            for (const key in extract.attributes) {
-                const mappedKey = INVERSE_ATTRIBUTE_MAP[key] || key;
-                const value = Array.isArray(extract.attributes[key])
-                    ? extract.attributes[key][0]
-                    : extract.attributes[key];
-                attributes[mappedKey] = value;
+        const attributeStatements = doc.getElementsByTagName('saml:AttributeStatement');
+        if (attributeStatements.length > 0) {
+            const attributeNodes = doc.getElementsByTagName('saml:Attribute');
+            for (let i = 0; i < attributeNodes.length; i++) {
+                const attr = attributeNodes[i];
+                const name = attr.getAttribute('Name');
+                const valueNode = attr.getElementsByTagName('saml:AttributeValue')[0];
+                if (valueNode) {
+                    attributes[name] = valueNode.textContent;
+                }
             }
         }
 
-        // Store session data
+        // Set session data
+        req.session.loggedIn = true;
+        req.session.user = {
+            email: nameId,
+            nameId: nameId
+        };
         req.session.attributes = attributes;
         req.session.samlAssertion = {
-            subject: extract.nameID,
+            subject: nameId,
             attributes: attributes,
-            sessionIndex: extract.sessionIndex || generateRequestID(),
-            issuer: extract.issuer,
             timestamp: new Date().toISOString(),
-            validUntil: addMinutes(new Date(), 30).toISOString()
+            validUntil: new Date(Date.now() + 30 * 60 * 1000).toISOString() // 30 minutes
         };
 
-        console.log('✅ SAML attributes processed:', JSON.stringify(attributes, null, 2));
+        console.log('✅ User session created for:', nameId);
 
-        // Handle RelayState for redirect
+        // Handle redirect based on RelayState
         let returnUrl = 'http://localhost:4004'; // default
+
         if (relayState) {
             try {
                 const relayData = JSON.parse(relayState);
                 console.log('📋 Parsed RelayState:', relayData);
+
                 if (relayData.returnUrl) {
                     returnUrl = relayData.returnUrl;
                 } else if (relayData.app === 'app3') {
@@ -237,7 +154,7 @@ app.post('/sp/acs', async (req, res) => {
                     returnUrl = 'http://localhost:4004';
                 }
             } catch (e) {
-                console.log('⚠️ Could not parse RelayState as JSON, using default return URL');
+                console.log('⚠️ Could not parse RelayState as JSON, using default');
             }
         }
 
@@ -245,26 +162,11 @@ app.post('/sp/acs', async (req, res) => {
         return res.redirect(returnUrl);
 
     } catch (error) {
-        console.error('❌ Error parsing SAML login response:', error);
+        console.error('❌ Error parsing SAML response:', error);
         return res.status(500).json({
             error: 'Failed to process SAML response',
             details: error.message
         });
-    }
-});
-
-// SP metadata endpoint
-app.get('/sp/metadata', (req, res) => {
-    if (!sp) {
-        return res.status(500).json({ error: 'SP not initialized' });
-    }
-
-    try {
-        const metadata = sp.getMetadata();
-        res.header('Content-Type', 'text/xml').send(metadata);
-    } catch (error) {
-        console.error('❌ Error generating SP metadata:', error);
-        res.status(500).json({ error: 'Failed to generate metadata' });
     }
 });
 
@@ -273,21 +175,21 @@ app.get('/sp/session/status', (req, res) => {
     console.log('📋 Session status check');
     console.log('Session logged in:', req.session.loggedIn);
 
-    if (req.session.loggedIn && req.session.samlAssertion) {
+    if (req.session.loggedIn && req.session.user) {
         // Check if session is still valid
-        const validUntil = new Date(req.session.samlAssertion.validUntil);
-        const isValid = validUntil > new Date();
-
-        if (!isValid) {
-            req.session = null;
-            return res.json({ authenticated: false, reason: 'Session expired' });
+        if (req.session.samlAssertion?.validUntil) {
+            const validUntil = new Date(req.session.samlAssertion.validUntil);
+            if (validUntil <= new Date()) {
+                req.session.destroy();
+                return res.json({ authenticated: false, reason: 'Session expired' });
+            }
         }
 
         res.json({
             authenticated: true,
             authMethod: 'saml',
-            assertion: req.session.samlAssertion,
-            expiresAt: req.session.samlAssertion.validUntil
+            user: req.session.user,
+            assertion: req.session.samlAssertion
         });
     } else {
         res.json({ authenticated: false });
@@ -297,15 +199,20 @@ app.get('/sp/session/status', (req, res) => {
 // Logout endpoint
 app.get('/sp/logout', (req, res) => {
     console.log('🚪 User logout requested');
-    req.session = null;
-    res.json({ message: 'Logged out successfully' });
+    req.session.destroy(err => {
+        if (err) {
+            console.error('Error destroying session:', err);
+            return res.status(500).json({ error: 'Could not log out' });
+        }
+        res.json({ message: 'Logged out successfully' });
+    });
 });
 
 // Protected endpoints
 app.get('/api/protected/app3', (req, res) => {
     console.log('🔒 Protected endpoint /api/protected/app3 accessed');
 
-    if (!req.session.loggedIn) {
+    if (!req.session.loggedIn || !req.session.user) {
         const returnUrl = encodeURIComponent('http://localhost:4003');
         const loginUrl = `/sp/sso/initiate?app=app3&returnUrl=${returnUrl}`;
         return res.status(401).json({
@@ -318,7 +225,7 @@ app.get('/api/protected/app3', (req, res) => {
     if (req.session.samlAssertion?.validUntil) {
         const validUntil = new Date(req.session.samlAssertion.validUntil);
         if (validUntil <= new Date()) {
-            req.session = null;
+            req.session.destroy();
             const returnUrl = encodeURIComponent('http://localhost:4003');
             const loginUrl = `/sp/sso/initiate?app=app3&returnUrl=${returnUrl}`;
             return res.status(401).json({
@@ -328,24 +235,20 @@ app.get('/api/protected/app3', (req, res) => {
         }
     }
 
-    const name = req.session.attributes?.givenName || req.session.attributes?.cn || 'Anonymous';
-    const responseData = {
+    const name = req.session.user.email || 'Anonymous';
+    res.json({
         message: `Hello ${name}! This is protected data for App 3!`,
         timestamp: new Date().toISOString(),
-        samlUser: req.session.samlAssertion,
+        user: req.session.user,
         appId: 'app3',
-        attributes: req.session.attributes,
-        sessionId: generateRequestID()
-    };
-
-    console.log('✅ Returning protected data for App 3');
-    res.json(responseData);
+        attributes: req.session.attributes
+    });
 });
 
 app.get('/api/protected/app4', (req, res) => {
     console.log('🔒 Protected endpoint /api/protected/app4 accessed');
 
-    if (!req.session.loggedIn) {
+    if (!req.session.loggedIn || !req.session.user) {
         const returnUrl = encodeURIComponent('http://localhost:4004');
         const loginUrl = `/sp/sso/initiate?app=app4&returnUrl=${returnUrl}`;
         return res.status(401).json({
@@ -355,10 +258,10 @@ app.get('/api/protected/app4', (req, res) => {
     }
 
     // Check session validity
-    if (req.session.samlAssertion?.validUntil) { 
+    if (req.session.samlAssertion?.validUntil) {
         const validUntil = new Date(req.session.samlAssertion.validUntil);
         if (validUntil <= new Date()) {
-            req.session = null;
+            req.session.destroy();
             const returnUrl = encodeURIComponent('http://localhost:4004');
             const loginUrl = `/sp/sso/initiate?app=app4&returnUrl=${returnUrl}`;
             return res.status(401).json({
@@ -368,27 +271,39 @@ app.get('/api/protected/app4', (req, res) => {
         }
     }
 
-    const name = req.session.attributes?.givenName || req.session.attributes?.cn || 'Anonymous';
-    const responseData = {
+    const name = req.session.user.email || 'Anonymous';
+    res.json({
         message: `Hello ${name}! This is protected data for App 4!`,
         timestamp: new Date().toISOString(),
-        samlUser: req.session.samlAssertion,
+        user: req.session.user,
         appId: 'app4',
-        attributes: req.session.attributes,
-        sessionId: generateRequestID()
-    };
-
-    console.log('✅ Returning protected data for App 4');
-    res.json(responseData);
+        attributes: req.session.attributes
+    });
 });
 
-// Root endpoint for health check
+// SP metadata endpoint
+app.get('/sp/metadata', (req, res) => {
+    const metadata = `<?xml version="1.0" encoding="UTF-8"?>
+    <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" 
+                         entityID="${SP_ENTITY_ID}">
+        <md:SPSSODescriptor AuthnRequestsSigned="false" 
+                            WantAssertionsSigned="false" 
+                            protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+            <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" 
+                                         Location="${SP_ACS_URL}" 
+                                         index="0" 
+                                         isDefault="true"/>
+        </md:SPSSODescriptor>
+    </md:EntityDescriptor>`;
+
+    res.header('Content-Type', 'text/xml').send(metadata);
+});
+
+// Health check
 app.get('/', (req, res) => {
     res.json({
         service: 'SAML Service Provider',
         status: 'running',
-        version: '2.0.0',
-        timestamp: new Date().toISOString(),
         endpoints: {
             metadata: '/sp/metadata',
             sso_initiate: '/sp/sso/initiate',
@@ -397,36 +312,18 @@ app.get('/', (req, res) => {
             logout: '/sp/logout',
             protected_app3: '/api/protected/app3',
             protected_app4: '/api/protected/app4'
-        },
-        idpMetadataUrl: URI_IDP_METADATA
+        }
     });
 });
 
-// Start server after SAML initialization
-async function startServer() {
-    const initialized = await initializeSAML();
-
-    if (!initialized) {
-        console.error('❌ Failed to initialize SAML. Make sure IdP is running on http://localhost:4002');
-        process.exit(1);
-    }
-
-    app.listen(4001, () => {
-        console.log('🔐 SAML Service Provider v2.0 running on http://localhost:4001');
-        console.log('📋 Available endpoints:');
-        console.log('   - GET  / (Health check & service info)');
-        console.log('   - GET  /sp/metadata (SP metadata)');
-        console.log('   - GET  /sp/sso/initiate (Initiate SAML login)');
-        console.log('   - POST /sp/acs (Assertion Consumer Service)');
-        console.log('   - GET  /sp/session/status (Check auth status)');
-        console.log('   - GET  /sp/logout (Logout)');
-        console.log('   - GET  /api/protected/app3 (Protected endpoint for App 3)');
-        console.log('   - GET  /api/protected/app4 (Protected endpoint for App 4)');
-        console.log('🔗 Identity Provider: ' + URI_IDP_METADATA);
-    });
-}
-
-startServer().catch(error => {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
+app.listen(PORT, () => {
+    console.log('🔐 SAML Service Provider running on http://localhost:4001');
+    console.log('📋 Available endpoints:');
+    console.log('   - GET  /sp/metadata (SP metadata)');
+    console.log('   - GET  /sp/sso/initiate (Initiate SAML login)');
+    console.log('   - POST /sp/acs (Assertion Consumer Service)');
+    console.log('   - GET  /sp/session/status (Check auth status)');
+    console.log('   - GET  /sp/logout (Logout)');
+    console.log('   - GET  /api/protected/app3 (Protected endpoint for App 3)');
+    console.log('   - GET  /api/protected/app4 (Protected endpoint for App 4)');
 });
