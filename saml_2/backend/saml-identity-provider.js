@@ -4,7 +4,8 @@ import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
 import urlencoded from 'body-parser';
 import json from 'body-parser';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
+import { addMinutes } from 'date-fns';
 import cors from 'cors';
 
 const app = express();
@@ -36,7 +37,54 @@ const users = {
   }
 };
 
-// Simple IdP configuration
+// Better ID generation following the working code pattern
+const generateRequestID = () => {
+  return '_' + randomUUID();
+}
+
+// Template callback function similar to working code
+const createTemplateCallback = (idp, sp, user, inResponseTo = null) => template => {
+  const assertionConsumerServiceUrl = sp.entityMeta.getAssertionConsumerService('urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST');
+  const nameIDFormat = idp.entitySetting.nameIDFormat;
+  const selectedNameIDFormat = Array.isArray(nameIDFormat) ? nameIDFormat[0] : nameIDFormat;
+
+  const id = generateRequestID();
+  const assertionId = generateRequestID();
+  const now = new Date();
+  const fiveMinutesLater = addMinutes(now, 5);
+
+  const tagValues = {
+    ID: id,
+    AssertionID: assertionId,
+    Destination: assertionConsumerServiceUrl,
+    Audience: sp.entityMeta.getEntityID(),
+    EntityID: sp.entityMeta.getEntityID(),
+    SubjectRecipient: assertionConsumerServiceUrl,
+    Issuer: idp.entityMeta.getEntityID(),
+    IssueInstant: now.toISOString(),
+    AssertionConsumerServiceURL: assertionConsumerServiceUrl,
+    StatusCode: 'urn:oasis:names:tc:SAML:2.0:status:Success',
+    ConditionsNotBefore: now.toISOString(),
+    ConditionsNotOnOrAfter: fiveMinutesLater.toISOString(),
+    SubjectConfirmationDataNotOnOrAfter: fiveMinutesLater.toISOString(),
+    NameIDFormat: selectedNameIDFormat,
+    NameID: user.email,
+    InResponseTo: inResponseTo || 'null',
+    // User attributes
+    firstName: user.givenName,
+    lastName: user.sn,
+    email: user.email,
+    commonName: user.cn,
+    title: user.title
+  };
+
+  return {
+    id,
+    context: template.replace(/{(\w+)}/g, (match, key) => tagValues[key] || match)
+  };
+}
+
+// IdP configuration with custom login response template
 const idp = IdentityProvider({
   entityID: 'http://localhost:4002/idp/metadata',
   wantAuthnRequestsSigned: false,
@@ -44,7 +92,53 @@ const idp = IdentityProvider({
   singleSignOnService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
     Location: 'http://localhost:4002/idp/sso'
-  }]
+  }],
+  loginResponseTemplate: {
+    context: `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{ID}" Version="2.0" IssueInstant="{IssueInstant}" Destination="{Destination}" InResponseTo="{InResponseTo}">
+      <saml:Issuer>{Issuer}</saml:Issuer>
+      <samlp:Status>
+        <samlp:StatusCode Value="{StatusCode}"/>
+      </samlp:Status>
+      <saml:Assertion ID="{AssertionID}" Version="2.0" IssueInstant="{IssueInstant}">
+        <saml:Issuer>{Issuer}</saml:Issuer>
+        <saml:Subject>
+          <saml:NameID Format="{NameIDFormat}">{NameID}</saml:NameID>
+          <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+            <saml:SubjectConfirmationData NotOnOrAfter="{SubjectConfirmationDataNotOnOrAfter}" Recipient="{SubjectRecipient}" InResponseTo="{InResponseTo}"/>
+          </saml:SubjectConfirmation>
+        </saml:Subject>
+        <saml:Conditions NotBefore="{ConditionsNotBefore}" NotOnOrAfter="{ConditionsNotOnOrAfter}">
+          <saml:AudienceRestriction>
+            <saml:Audience>{Audience}</saml:Audience>
+          </saml:AudienceRestriction>
+        </saml:Conditions>
+        <saml:AttributeStatement>
+          <saml:Attribute Name="urn:oid:2.5.4.42" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+            <saml:AttributeValue>{firstName}</saml:AttributeValue>
+          </saml:Attribute>
+          <saml:Attribute Name="urn:oid:2.5.4.4" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+            <saml:AttributeValue>{lastName}</saml:AttributeValue>
+          </saml:Attribute>
+          <saml:Attribute Name="urn:oid:1.3.6.1.4.1.5923.1.1.1.6" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+            <saml:AttributeValue>{email}</saml:AttributeValue>
+          </saml:Attribute>
+          <saml:Attribute Name="urn:oid:2.5.4.3" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+            <saml:AttributeValue>{commonName}</saml:AttributeValue>
+          </saml:Attribute>
+          <saml:Attribute Name="urn:oid:2.5.4.12" NameFormat="urn:oasis:names:tc:SAML:2.0:attrname-format:uri">
+            <saml:AttributeValue>{title}</saml:AttributeValue>
+          </saml:Attribute>
+        </saml:AttributeStatement>
+      </saml:Assertion>
+    </samlp:Response>`,
+    attributes: [
+      { name: 'firstName', valueTag: 'firstName', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
+      { name: 'lastName', valueTag: 'lastName', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
+      { name: 'email', valueTag: 'email', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
+      { name: 'commonName', valueTag: 'commonName', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
+      { name: 'title', valueTag: 'title', nameFormat: 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri', valueXsiType: 'xs:string' },
+    ]
+  }
 });
 
 // SP configuration
@@ -62,12 +156,10 @@ const sp = ServiceProvider({
   nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress']
 });
 
-// Store current SAML context in session instead of separate store
 app.get('/idp/metadata', (req, res) => {
   res.header('Content-Type', 'text/xml').send(idp.getMetadata());
 });
 
-// SIMPLIFIED SSO endpoint - store extract in session
 app.get('/idp/sso', async (req, res) => {
   const { SAMLRequest, RelayState } = req.query;
 
@@ -77,24 +169,20 @@ app.get('/idp/sso', async (req, res) => {
 
   try {
     const { extract } = await idp.parseLoginRequest(sp, 'redirect', req);
-    
-    // Generate a requestId for the form (even though we store in session)
-    const requestId = extract.request?.id || extract.id || `_${uuidv4()}`;
-    
-    // Store in session instead of separate store
+
+    const requestId = extract.request?.id || extract.id || generateRequestID();
+
     req.session.samlContext = {
       extract: extract,
       relayState: RelayState,
       timestamp: Date.now(),
-      requestId: requestId  // Store for reference
+      requestId: requestId
     };
 
-    // Check if already authenticated
     if (req.session.authenticatedUser) {
       return handleAuthenticatedUser(req, res);
     }
 
-    // Show login form - ADD BACK the requestId hidden input
     res.send(`
       <!DOCTYPE html>
       <html>
@@ -127,7 +215,6 @@ app.get('/idp/sso', async (req, res) => {
   }
 });
 
-// Authentication endpoint - accept requestId but use session context
 app.post('/idp/authenticate', (req, res) => {
   const { username, password, requestId } = req.body;
   console.log(`🔐 Authentication attempt for user: ${username}, requestId: ${requestId}`);
@@ -149,7 +236,7 @@ app.post('/idp/authenticate', (req, res) => {
   handleAuthenticatedUser(req, res);
 });
 
-// Handle authenticated user - generate SAML response immediately
+// Enhanced function using the template callback pattern
 async function handleAuthenticatedUser(req, res) {
   if (!req.session.samlContext) {
     return res.status(400).json({ error: 'No SAML context found' });
@@ -159,26 +246,20 @@ async function handleAuthenticatedUser(req, res) {
   const { extract, relayState } = req.session.samlContext;
 
   try {
-    const userAttributes = {
-      'urn:oid:1.3.6.1.4.1.5923.1.1.1.6': user.email,
-      'urn:oid:2.5.4.3': user.cn,
-      'urn:oid:2.5.4.4': user.sn,
-      'urn:oid:2.5.4.42': user.givenName,
-      'urn:oid:0.9.2342.19200300.100.1.3': user.mail,
-      'urn:oid:2.5.4.12': user.title
-    };
-
     console.log('🔍 Creating login response for:', user.email);
 
-    // Generate SAML response immediately
+    // Use the template callback approach from working code
+    const inResponseTo = extract.request?.id || extract.id;
+    const templateCallback = createTemplateCallback(idp, sp, user, inResponseTo);
+
+    // Create login response using the template callback
     const loginResponse = await idp.createLoginResponse(
       sp,
       extract,
       'post',
       user.email,
-      userAttributes
+      templateCallback
     );
-
     // Clear SAML context
     req.session.samlContext = null;
 

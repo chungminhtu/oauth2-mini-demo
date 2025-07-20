@@ -4,9 +4,10 @@ import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
 import urlencoded from 'body-parser';
 import json from 'body-parser';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
+import { addMinutes } from 'date-fns';
 import cors from 'cors';
-import axios  from 'axios';
+import axios from 'axios';
 
 const app = express();
 app.use(urlencoded({ extended: true }));
@@ -21,6 +22,10 @@ app.use(cookieSession({
     maxAge: 24 * 60 * 60 * 1000
 }));
 
+// Better ID generation following the working code pattern
+const generateRequestID = () => {
+    return '_' + randomUUID();
+}
 
 // ATTRIBUTE MAPPING (from your working code)
 const INVERSE_ATTRIBUTE_MAP = {
@@ -35,12 +40,11 @@ const INVERSE_ATTRIBUTE_MAP = {
     'urn:oid:2.5.4.12': 'title'
 };
 
-  
 setSchemaValidator(validator);
 
 const URI_IDP_METADATA = 'http://localhost:4002/idp/metadata';
 
-axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
+axios.get(URI_IDP_METADATA).then(response => {
     console.log('✅ Successfully fetched IdP metadata');
 
     const idp = IdentityProvider({
@@ -48,6 +52,7 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
         wantAuthnRequestsSigned: false
     });
 
+    // Enhanced SP configuration following working code patterns
     const sp = ServiceProvider({
         entityID: 'http://localhost:4001/sp/metadata',
         authnRequestsSigned: false,
@@ -59,10 +64,17 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
             Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST',
             Location: 'http://localhost:4001/sp/acs',
         }],
-        nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress']
+        nameIDFormat: ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'],
+        // Add request template for better ID generation
+        loginRequestTemplate: {
+            context: `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="{ID}" Version="2.0" IssueInstant="{IssueInstant}" Destination="{Destination}" ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" AssertionConsumerServiceURL="{AssertionConsumerServiceURL}">
+              <saml:Issuer>{Issuer}</saml:Issuer>
+              <samlp:NameIDPolicy Format="{NameIDFormat}" AllowCreate="true"/>
+            </samlp:AuthnRequest>`
+        }
     });
 
-    // Fix: Enhanced ACS endpoint with better error handling
+    // Enhanced ACS endpoint with better error handling
     app.post('/sp/acs', async (req, res) => {
         console.log('📥 Received /sp/acs post request...');
         console.log('📋 Request body keys:', Object.keys(req.body));
@@ -72,7 +84,6 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
         const relayState = req.body.RelayState;
         console.log('📋 Relay state:', relayState);
 
-        // Fix: Validate SAMLResponse is present and not undefined
         if (!req.body.SAMLResponse || req.body.SAMLResponse === 'undefined') {
             console.error('❌ Invalid or missing SAMLResponse');
             return res.status(400).json({
@@ -92,21 +103,28 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
 
             req.session.loggedIn = true;
 
-            // Process attributes
+            // Enhanced attribute processing
             const attributes = {};
             if (extract.attributes) {
                 for (const key in extract.attributes) {
                     const mappedKey = INVERSE_ATTRIBUTE_MAP[key] || key;
-                    attributes[mappedKey] = extract.attributes[key];
+                    // Handle both single values and arrays
+                    const value = Array.isArray(extract.attributes[key])
+                        ? extract.attributes[key][0]
+                        : extract.attributes[key];
+                    attributes[mappedKey] = value;
                 }
             }
 
+            // Enhanced session data
             req.session.attributes = attributes;
             req.session.samlAssertion = {
                 subject: extract.nameID,
                 attributes: attributes,
-                sessionIndex: extract.sessionIndex,
-                issuer: extract.issuer
+                sessionIndex: extract.sessionIndex || generateRequestID(),
+                issuer: extract.issuer,
+                timestamp: new Date().toISOString(),
+                validUntil: addMinutes(new Date(), 30).toISOString() // 30-minute session
             };
 
             console.log('✅ SAML attributes processed:', JSON.stringify(attributes, null, 2));
@@ -148,20 +166,40 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
         }
     });
 
-    // Login endpoint
+    // Enhanced login endpoint with better request ID generation
     app.get('/sp/sso/initiate', (req, res) => {
         const { app: appName, returnUrl } = req.query;
         console.log(`🚀 Initiating SAML login for app: ${appName}`);
         console.log(`🔗 Return URL: ${returnUrl}`);
 
         try {
-            const { id, context } = sp.createLoginRequest(idp, 'redirect');
+            // Create template callback for better request generation
+            const createLoginRequestTemplate = () => {
+                const id = generateRequestID();
+                const now = new Date();
+
+                return {
+                    id,
+                    context: {
+                        ID: id,
+                        IssueInstant: now.toISOString(),
+                        Destination: 'http://localhost:4002/idp/sso',
+                        AssertionConsumerServiceURL: 'http://localhost:4001/sp/acs',
+                        Issuer: sp.entityMeta.getEntityID(),
+                        NameIDFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'
+                    }
+                };
+            };
+
+            const { id, context } = sp.createLoginRequest(idp, 'redirect', createLoginRequestTemplate);
             console.log('✅ SAML Login Request created with ID: %s', id);
 
             const parsedUrl = new URL(context);
             const relayState = JSON.stringify({
                 app: appName,
-                returnUrl: returnUrl
+                returnUrl: returnUrl,
+                timestamp: new Date().toISOString(),
+                requestId: id
             });
 
             parsedUrl.searchParams.append('RelayState', relayState);
@@ -188,17 +226,27 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
         }
     });
 
-    // Session status endpoint
+    // Enhanced session status endpoint
     app.get('/sp/session/status', (req, res) => {
         console.log('📋 Session status check');
         console.log('Session logged in:', req.session.loggedIn);
         console.log('Session keys:', Object.keys(req.session || {}));
 
         if (req.session.loggedIn && req.session.samlAssertion) {
+            // Check if session is still valid
+            const validUntil = new Date(req.session.samlAssertion.validUntil);
+            const isValid = validUntil > new Date();
+
+            if (!isValid) {
+                req.session = null;
+                return res.json({ authenticated: false, reason: 'Session expired' });
+            }
+
             res.json({
                 authenticated: true,
                 authMethod: 'saml',
-                assertion: req.session.samlAssertion
+                assertion: req.session.samlAssertion,
+                expiresAt: req.session.samlAssertion.validUntil
             });
         } else {
             res.json({ authenticated: false });
@@ -212,7 +260,7 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
         res.json({ message: 'Logged out successfully' });
     });
 
-    // Protected endpoints for both apps
+    // Protected endpoints for both apps with enhanced error handling
     app.get('/api/protected/app3', (req, res) => {
         console.log('🔒 Protected endpoint /api/protected/app3 accessed');
         console.log('Session logged in:', req.session.loggedIn);
@@ -227,13 +275,28 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
             });
         }
 
+        // Check session validity
+        if (req.session.samlAssertion?.validUntil) {
+            const validUntil = new Date(req.session.samlAssertion.validUntil);
+            if (validUntil <= new Date()) {
+                req.session = null;
+                const returnUrl = encodeURIComponent('http://localhost:4003');
+                const loginUrl = `/sp/sso/initiate?app=app3&returnUrl=${returnUrl}`;
+                return res.status(401).json({
+                    error: 'Session expired',
+                    loginUrl: loginUrl
+                });
+            }
+        }
+
         const name = req.session.attributes?.givenName || req.session.attributes?.cn || 'Anonymous';
         const responseData = {
             message: `Hello ${name}! This is protected data for App 3!`,
             timestamp: new Date().toISOString(),
             samlUser: req.session.samlAssertion,
             appId: 'app3',
-            attributes: req.session.attributes
+            attributes: req.session.attributes,
+            sessionId: generateRequestID() // Unique response ID
         };
 
         console.log('✅ Returning protected data for App 3');
@@ -254,13 +317,28 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
             });
         }
 
+        // Check session validity
+        if (req.session.samlAssertion?.validUntil) {
+            const validUntil = new Date(req.session.samlAssertion.validUntil);
+            if (validUntil <= new Date()) {
+                req.session = null;
+                const returnUrl = encodeURIComponent('http://localhost:4004');
+                const loginUrl = `/sp/sso/initiate?app=app4&returnUrl=${returnUrl}`;
+                return res.status(401).json({
+                    error: 'Session expired',
+                    loginUrl: loginUrl
+                });
+            }
+        }
+
         const name = req.session.attributes?.givenName || req.session.attributes?.cn || 'Anonymous';
         const responseData = {
             message: `Hello ${name}! This is protected data for App 4!`,
             timestamp: new Date().toISOString(),
             samlUser: req.session.samlAssertion,
             appId: 'app4',
-            attributes: req.session.attributes
+            attributes: req.session.attributes,
+            sessionId: generateRequestID() // Unique response ID
         };
 
         console.log('✅ Returning protected data for App 4');
@@ -272,19 +350,25 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
         res.json({
             service: 'SAML Service Provider',
             status: 'running',
+            version: '2.0.0',
+            timestamp: new Date().toISOString(),
             endpoints: {
                 metadata: '/sp/metadata',
                 sso_initiate: '/sp/sso/initiate',
                 acs: '/sp/acs',
                 session_status: '/sp/session/status',
-                logout: '/sp/logout'
-            }
+                logout: '/sp/logout',
+                protected_app3: '/api/protected/app3',
+                protected_app4: '/api/protected/app4'
+            },
+            idpMetadataUrl: URI_IDP_METADATA
         });
     });
 
     app.listen(4001, () => {
-        console.log('🔐 SAML Service Provider running on http://localhost:4001');
+        console.log('🔐 SAML Service Provider v2.0 running on http://localhost:4001');
         console.log('📋 Available endpoints:');
+        console.log('   - GET  / (Health check & service info)');
         console.log('   - GET  /sp/metadata (SP metadata)');
         console.log('   - GET  /sp/sso/initiate (Initiate SAML login)');
         console.log('   - POST /sp/acs (Assertion Consumer Service)');
@@ -292,6 +376,7 @@ axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
         console.log('   - GET  /sp/logout (Logout)');
         console.log('   - GET  /api/protected/app3 (Protected endpoint for App 3)');
         console.log('   - GET  /api/protected/app4 (Protected endpoint for App 4)');
+        console.log('🔗 Identity Provider: ' + URI_IDP_METADATA);
     });
 
 }).catch(error => {
