@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import axios, { AxiosInstance } from 'axios';
+import axios from 'axios';
 import { spawn, ChildProcess } from 'child_process';
 import { JSDOM } from 'jsdom';
 import { wrapper } from 'axios-cookiejar-support';
@@ -8,7 +8,7 @@ import { CookieJar } from 'tough-cookie';
 describe('SAML 2.0 Successful Authentication Flow', () => {
     let idpServer: ChildProcess;
     let spServer: ChildProcess;
-    let client: AxiosInstance;
+    let client: any;
 
     const IDP_BASE_URL = 'http://localhost:4002';
     const SP_BASE_URL = 'http://localhost:4001';

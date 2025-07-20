@@ -20,6 +20,7 @@ app.use(cookieSession({
   maxAge: 24 * 60 * 60 * 1000
 }));
 
+
 setSchemaValidator(validator);
 
 // Demo users
@@ -36,7 +37,7 @@ const users = {
   }
 };
 
-// Identity Provider configuration
+// Identity Provider configuration - Fix: Add SingleLogoutService
 const idp = IdentityProvider({
   entityID: 'http://localhost:4002/idp/metadata',
   wantAuthnRequestsSigned: false,
@@ -44,6 +45,10 @@ const idp = IdentityProvider({
   singleSignOnService: [{
     Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
     Location: 'http://localhost:4002/idp/sso'
+  }],
+  singleLogoutService: [{ // Fix: Add missing SLO service
+    Binding: 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect',
+    Location: 'http://localhost:4002/idp/slo'
   }]
 });
 
@@ -155,6 +160,7 @@ app.post('/idp/authenticate', (req, res) => {
 const generateAndSendSAMLResponse = async (user, requestId, res) => {
   const requestContext = samlRequestStore.get(requestId);
   if (!requestContext) {
+    console.error('❌ Request context not found for requestId:', requestId);
     return res.status(400).json({ error: 'Invalid SAML request' });
   }
 
@@ -207,6 +213,21 @@ const generateAndSendSAMLResponse = async (user, requestId, res) => {
     res.status(500).json({ error: 'Failed to generate SAML response' });
   }
 };
+
+// Add SLO endpoint (placeholder)
+app.get('/idp/slo', (req, res) => {
+  console.log('🚪 Single Logout initiated');
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>Logout</title></head>
+    <body style="font-family: Arial; text-align: center; margin: 100px auto;">
+      <h2>✅ Successfully Logged Out</h2>
+      <p>You have been logged out from the Identity Provider.</p>
+    </body>
+    </html>
+  `);
+});
 
 app.listen(4002, () => {
   console.log('🔐 SAML Identity Provider running on http://localhost:4002');

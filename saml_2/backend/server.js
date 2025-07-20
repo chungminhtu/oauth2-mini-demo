@@ -2,10 +2,25 @@ import express from 'express';
 import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
 import validator from '@authenio/samlify-node-xmllint';
-import get from 'axios';
 import urlencoded from 'body-parser';
 import json from 'body-parser';
+import { v4 as uuidv4 } from 'uuid';
 import cors from 'cors';
+import axios  from 'axios';
+
+const app = express();
+app.use(urlencoded({ extended: true }));
+app.use(json());
+app.use(cors({
+    origin: ['http://localhost:4003', 'http://localhost:4004'],
+    credentials: true
+}));
+app.use(cookieSession({
+    name: 'idp_session',
+    keys: ['idp-secret-key'],
+    maxAge: 24 * 60 * 60 * 1000
+}));
+
 
 // ATTRIBUTE MAPPING (from your working code)
 const INVERSE_ATTRIBUTE_MAP = {
@@ -20,26 +35,12 @@ const INVERSE_ATTRIBUTE_MAP = {
     'urn:oid:2.5.4.12': 'title'
 };
 
-const app = express();
-
-app.use(urlencoded({ extended: true }));
-app.use(json());
-app.use(cors({
-    origin: ['http://localhost:4003', 'http://localhost:4004'],
-    credentials: true
-}));
-
-app.use(cookieSession({
-    name: 'session',
-    keys: ['my-favorite-secret'],
-    maxAge: 8 * 60 * 60 * 1000
-}));
-
+  
 setSchemaValidator(validator);
 
 const URI_IDP_METADATA = 'http://localhost:4002/idp/metadata';
 
-get(URI_IDP_METADATA).then(response => {
+axios.get(URI_IDP_METADATA).then(response => { // Fix: use axios properly
     console.log('✅ Successfully fetched IdP metadata');
 
     const idp = IdentityProvider({
