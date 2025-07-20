@@ -740,3 +740,5 @@ This SAML 2.0 demo showcases:
 
 **Happy SAML-ing!** 🚀
 
+http://localhost:4001/sp/sso/initiate?app=app3 → Should redirect to http://localhost:4003
+http://localhost:4001/sp/sso/initiate?app=app4 → Should redirect to http://localhost:4004
