@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@authenio/samlify-node-xmllint": "^2.0.0",
+    "@xmldom/xmldom": "^0.9.8",
     "axios": "^1.10.0",
     "body-parser": "^1.20.3",
     "cookie-session": "^2.1.1",
