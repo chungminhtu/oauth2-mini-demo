@@ -1,6 +1,8 @@
 import express from 'express';
 import cookieSession from 'cookie-session';
 import { setSchemaValidator, IdentityProvider, ServiceProvider } from 'samlify';
+import samlify from 'samlify'; // Import the default export
+
 import validator from '@authenio/samlify-node-xmllint';
 import urlencoded from 'body-parser';
 import json from 'body-parser';
@@ -156,63 +158,174 @@ app.post('/idp/authenticate', (req, res) => {
   generateAndSendSAMLResponse(user, requestId, res);
 });
 
-// Generate SAML Response - FIXED VERSION
+
+// Generate SAML Response - Using SamlLib.replaceTagsByValue
+// const generateAndSendSAMLResponse = async (user, requestId, res) => {
+//   const requestContext = samlRequestStore.get(requestId);
+//   if (!requestContext) {
+//     console.error('❌ Request context not found for requestId:', requestId);
+//     return res.status(400).json({ error: 'Invalid SAML request' });
+//   }
+
+//   console.log(`📤 Generating SAML Response for user: ${user.email}`);
+//   console.log('📋 Request context extract:', JSON.stringify(requestContext.extract, null, 2));
+
+//   try {
+//     const createTemplateCallback = (_idp, _sp, _binding, user, requestContext) => {
+//       const _id = `_${uuidv4()}`;
+//       const now = new Date();
+//       const spEntityID = _sp.entityMeta.getEntityID();
+//       const idpSetting = _idp.entitySetting;
+//       const fiveMinutesLater = new Date(now.getTime());
+//       fiveMinutesLater.setMinutes(fiveMinutesLater.getMinutes() + 5);
+
+//       let inResponseTo = `_${uuidv4()}`;
+//       if (requestContext.extract) {
+//         if (requestContext.extract.request && requestContext.extract.request.id) {
+//           inResponseTo = requestContext.extract.request.id;
+//         } else if (requestContext.extract.id) {
+//           inResponseTo = requestContext.extract.id;
+//         }
+//       }
+
+//       const tvalue = {
+//         ID: _id,
+//         AssertionID: idpSetting.generateID ? idpSetting.generateID() : `_${uuid.v4()}`,
+//         Destination: _sp.entityMeta.getAssertionConsumerService(_binding),
+//         Audience: spEntityID,
+//         SubjectRecipient: spEntityID,
+//         NameIDFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+//         NameID: user.email,
+//         Issuer: _idp.entityMeta.getEntityID(),
+//         IssueInstant: now.toISOString(),
+//         ConditionsNotBefore: now.toISOString(),
+//         ConditionsNotOnOrAfter: fiveMinutesLater.toISOString(),
+//         SubjectConfirmationDataNotOnOrAfter: fiveMinutesLater.toISOString(),
+//         AssertionConsumerServiceURL: _sp.entityMeta.getAssertionConsumerService(_binding),
+//         EntityID: spEntityID,
+//         InResponseTo: inResponseTo,
+//         StatusCode: 'urn:oasis:names:tc:SAML:2.0:status:Success',
+//         attrUserEmail: user.email,
+//         attrUserName: user.cn || user.givenName,
+//         attrGivenName: user.givenName,
+//         attrSurname: user.sn,
+//         attrMail: user.mail,
+//         attrTitle: user.title,
+//       };
+
+//       // Return object with both the callback function AND debug values
+//       return {
+//         // The actual callback function for samlify
+//         callback: (template) => {
+//           return {
+//             id: _id,
+//             context: samlify.SamlLib.replaceTagsByValue(template, tvalue),
+//           };
+//         },
+//         // Debug values you can inspect
+//         debugValues: {
+//           _id,
+//           tvalue,
+//           spEntityID,
+//           inResponseTo,
+//           now: now.toISOString(),
+//           fiveMinutesLater: fiveMinutesLater.toISOString()
+//         }
+//       };
+//     };
+
+//     // Now you can debug:
+//     const templateData = createTemplateCallback(idp, sp, 'post', user, requestContext);
+//     const fuck = templateData.debugValues; // <-- All your debug values here
+//     const templateCallBack = templateData.callback; // <-- The actual callback for samlify
+
+//     // Use the destructuring pattern
+//     const { id, context } = await idp.createLoginResponse(
+//       sp,                                                    // Service Provider
+//       requestContext,                          // Request extract
+//       'post',                                               // Binding type
+//       user,                                           // NameID (subject)
+//       templateCallBack,       // Template callback with SamlLib
+//       undefined,                                            // Custom template (optional)
+//       requestContext.relayState                             // RelayState
+//     );
+
+//     samlRequestStore.delete(requestId);
+//     console.log(`✅ SAML Response generated successfully with ID: ${id}`);
+
+//     // Send SAML Response via POST binding to SP's ACS
+//     res.send(`
+//       <!DOCTYPE html>
+//       <html>
+//       <head><title>SAML Response</title></head>
+//       <body onload="document.forms[0].submit()">
+//         <form method="post" action="http://localhost:4001/sp/acs">
+//           <input type="hidden" name="SAMLResponse" value="${context}">
+//           <input type="hidden" name="RelayState" value="${requestContext.relayState || ''}">
+//           <p>🔄 Redirecting back to Service Provider...</p>
+//           <button type="submit">Continue</button>
+//         </form>
+//       </body>
+//       </html>
+//     `);
+//   } catch (error) {
+//     console.error('❌ Error generating SAML Response:', error);
+//     console.error('Error details:', error.message);
+//     console.error('Error stack:', error.stack);
+//     res.status(500).json({
+//       error: 'Failed to generate SAML response',
+//       details: error.message
+//     });
+//   }
+// };
+
 const generateAndSendSAMLResponse = async (user, requestId, res) => {
   const requestContext = samlRequestStore.get(requestId);
   if (!requestContext) {
-    console.error('❌ Request context not found for requestId:', requestId);
     return res.status(400).json({ error: 'Invalid SAML request' });
   }
 
-  console.log(`📤 Generating SAML Response for user: ${user.email}`);
-
   try {
-    // User attributes matching the SP's INVERSE_ATTRIBUTE_MAP
     const userAttributes = {
-      'urn:oid:1.3.6.1.4.1.5923.1.1.1.6': user.email,     // email
-      'urn:oid:2.5.4.3': user.cn,                          // cn        
-      'urn:oid:2.5.4.4': user.sn,                          // sn
-      'urn:oid:2.5.4.42': user.givenName,                  // givenName
-      'urn:oid:0.9.2342.19200300.100.1.3': user.mail,     // mail
-      'urn:oid:2.5.4.12': user.title                       // title
+      'urn:oid:1.3.6.1.4.1.5923.1.1.1.6': user.email,
+      'urn:oid:2.5.4.3': user.cn,
+      'urn:oid:2.5.4.4': user.sn,
+      'urn:oid:2.5.4.42': user.givenName,
+      'urn:oid:0.9.2342.19200300.100.1.3': user.mail,
+      'urn:oid:2.5.4.12': user.title
     };
 
-    // Create the SAML Response - Correct parameter order for samlify v2.x
+    // Simple approach - no custom template callback
     const loginResponse = await idp.createLoginResponse(
-      sp,                              // Service Provider
-      requestContext.extract,          // Original AuthN request (extract)
-      'post',                          // Binding type
-      user.email,                      // NameID (subject)
-      userAttributes                   // User attributes
+      sp,
+      requestContext.extract,
+      'post',
+      user.email,
+      userAttributes
     );
 
-    // Extract the context (base64-encoded SAMLResponse)
-    const samlResponse = loginResponse.context;
-
     samlRequestStore.delete(requestId);
-    console.log(`✅ SAML Response generated successfully`);
 
-    // Send SAML Response via POST binding to SP's ACS
     res.send(`
-            <!DOCTYPE html>
-            <html>
-            <head><title>SAML Response</title></head>
-            <body onload="document.forms[0].submit()">
-                <form method="post" action="http://localhost:4001/sp/acs">
-                    <input type="hidden" name="SAMLResponse" value="${samlResponse}">
-                    <input type="hidden" name="RelayState" value="${requestContext.relayState || ''}">
-                    <p>🔄 Redirecting back to Service Provider...</p>
-                    <button type="submit">Continue</button>
-                </form>
-            </body>
-            </html>
-        `);
+      <!DOCTYPE html>
+      <html>
+      <head><title>SAML Response</title></head>
+      <body onload="document.forms[0].submit()">
+        <form method="post" action="http://localhost:4001/sp/acs">
+          <input type="hidden" name="SAMLResponse" value="${loginResponse.context}">
+          <input type="hidden" name="RelayState" value="${requestContext.relayState || ''}">
+          <p>🔄 Redirecting back to Service Provider...</p>
+          <button type="submit">Continue</button>
+        </form>
+      </body>
+      </html>
+    `);
   } catch (error) {
-    console.error('❌ Error generating SAML Response:', error);
-    console.error('Error details:', error.message);
+    console.error('❌ Error:', error);
     res.status(500).json({ error: 'Failed to generate SAML response' });
   }
 };
+
 
 // Add SLO endpoint (placeholder)
 app.get('/idp/slo', (req, res) => {
