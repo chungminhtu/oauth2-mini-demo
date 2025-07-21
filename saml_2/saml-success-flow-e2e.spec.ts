@@ -21,7 +21,7 @@ describe('SAML 2.0 Authentication Flow', () => {
         const jar = new CookieJar();
         client = wrapper(axios.create({ jar }));
 
-        idpServer = spawn('node', ['saml_2/backend/saml-identity-provider.js'], {
+        idpServer = spawn('node', ['backend/saml-identity-provider.js'], {
             stdio: ['pipe', 'pipe', 'pipe']
         });
 
@@ -35,7 +35,7 @@ describe('SAML 2.0 Authentication Flow', () => {
             }
         }
 
-        spServer = spawn('node', ['saml_2/backend/server.js'], {
+        spServer = spawn('node', ['backend/server.js'], {
             stdio: ['pipe', 'pipe', 'pipe']
         });
 
