@@ -42,8 +42,12 @@ const App = () => {
 
   const handleSAMLLogin = (method = 'post') => {
     const returnUrl = encodeURIComponent(window.location.href);
-    const endpoint = method === 'redirect' ? 'initiate-redirect' : 'initiate-post';
-    window.location.href = `${SAML_BACKEND}/sp/sso/${endpoint}?app=app3&returnUrl=${returnUrl}`;
+    
+    const endpoint = method === 'redirect' 
+      ? '/sp/sso/initiate-redirect' 
+      : '/sp/sso/initiate';
+    
+    window.location.href = `${SAML_BACKEND}${endpoint}?app=app3&returnUrl=${returnUrl}`;
   };
 
   const fetchPrivateData = async () => {
@@ -110,83 +114,36 @@ const App = () => {
       {!authenticated ? (
         <div>
           <p>Please authenticate with SAML Identity Provider to access this application.</p>
-
-          <div style={{ background: '#f8f9fa', padding: '20px', borderRadius: '5px', marginBottom: '20px' }}>
-            <h3>🚀 Choose Authentication Method:</h3>
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ marginRight: '20px' }}>
-                <input
-                  type="radio"
-                  value="post"
-                  checked={selectedMethod === 'post'}
-                  onChange={(e) => setSelectedMethod(e.target.value)}
-                  style={{ marginRight: '5px' }}
-                />
-                HTTP-POST Method (Form submission)
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  value="redirect"
-                  checked={selectedMethod === 'redirect'}
-                  onChange={(e) => setSelectedMethod(e.target.value)}
-                  style={{ marginRight: '5px' }}
-                />
-                HTTP-Redirect Method (URL redirect)
-              </label>
-            </div>
-
-            <button
-              onClick={() => handleSAMLLogin(selectedMethod)}
-              style={{
-                background: selectedMethod === 'post' ? '#dc3545' : '#28a745',
-                color: 'white',
-                padding: '12px 20px',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '16px',
-                borderRadius: '5px',
-                marginRight: '10px'
-              }}
-            >
-              🚀 Login with {selectedMethod.toUpperCase()} Method
-            </button>
-
-            <div style={{ marginTop: '15px', fontSize: '14px', color: '#666' }}>
-              <strong>Methods Comparison:</strong><br />
-              • <strong>POST:</strong> More secure, form-based submission<br />
-              • <strong>Redirect:</strong> Simpler, URL-based redirect
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button
-              onClick={() => handleSAMLLogin('post')}
-              style={{
-                background: '#dc3545',
-                color: 'white',
-                padding: '10px 15px',
-                border: 'none',
-                cursor: 'pointer',
-                borderRadius: '5px'
-              }}
-            >
-              🔴 Quick POST Login
-            </button>
-            <button
-              onClick={() => handleSAMLLogin('redirect')}
-              style={{
-                background: '#28a745',
-                color: 'white',
-                padding: '10px 15px',
-                border: 'none',
-                cursor: 'pointer',
-                borderRadius: '5px'
-              }}
-            >
-              🟢 Quick Redirect Login
-            </button>
-          </div>
+          <button
+            onClick={() => handleSAMLLogin('post')}
+            style={{
+              background: '#007bff',
+              color: 'white',
+              padding: '10px 20px',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '16px',
+              borderRadius: '5px',
+              margin: '5px'
+            }}
+          >
+            🚀 Login with SAML (POST)
+          </button>
+          <button
+            onClick={() => handleSAMLLogin('redirect')}
+            style={{
+              background: '#28a745',
+              color: 'white',
+              padding: '10px 20px',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '16px',
+              borderRadius: '5px',
+              margin: '5px'
+            }}
+          >
+            🔄 Login with SAML (Redirect)
+          </button>
         </div>
       ) : (
         <div>
