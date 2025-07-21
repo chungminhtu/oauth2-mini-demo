@@ -9,6 +9,7 @@ const App = () => {
   const [privateData, setPrivateData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedMethod, setSelectedMethod] = useState('post');
 
   useEffect(() => {
     checkSamlSession();
@@ -37,9 +38,10 @@ const App = () => {
     }
   };
 
-  const handleSamlLogin = () => {
+  const handleSamlLogin = (method = 'post') => {
     const returnUrl = encodeURIComponent(window.location.href);
-    window.location.href = `${SAML_BACKEND}/sp/sso/initiate?app=${APP_NAME}&returnUrl=${returnUrl}`;
+    const endpoint = method === 'redirect' ? 'initiate-redirect' : 'initiate-post';
+    window.location.href = `${SAML_BACKEND}/sp/sso/${endpoint}?app=${APP_NAME}&returnUrl=${returnUrl}`;
   };
 
   const fetchPrivateData = async () => {
@@ -53,7 +55,6 @@ const App = () => {
 
       setPrivateData(response.data);
       console.log('📊 Private data received:', response.data);
-
     } catch (error) {
       console.error('Error fetching private data:', error);
 
@@ -105,20 +106,82 @@ const App = () => {
       {!samlSession ? (
         <div>
           <p>You are not logged in with SAML.</p>
-          <button
-            onClick={handleSamlLogin}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#007bff',
-              color: 'white',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '16px',
-              borderRadius: '5px'
-            }}
-          >
-            🚀 Login with SAML
-          </button>
+
+          <div style={{ background: '#f8f9fa', padding: '20px', borderRadius: '5px', marginBottom: '20px' }}>
+            <h3>🚀 Choose Authentication Method:</h3>
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ marginRight: '20px' }}>
+                <input
+                  type="radio"
+                  value="post"
+                  checked={selectedMethod === 'post'}
+                  onChange={(e) => setSelectedMethod(e.target.value)}
+                  style={{ marginRight: '5px' }}
+                />
+                HTTP-POST Method (Form submission)
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  value="redirect"
+                  checked={selectedMethod === 'redirect'}
+                  onChange={(e) => setSelectedMethod(e.target.value)}
+                  style={{ marginRight: '5px' }}
+                />
+                HTTP-Redirect Method (URL redirect)
+              </label>
+            </div>
+
+            <button
+              onClick={() => handleSamlLogin(selectedMethod)}
+              style={{
+                background: selectedMethod === 'post' ? '#dc3545' : '#28a745',
+                color: 'white',
+                padding: '12px 20px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '16px',
+                borderRadius: '5px'
+              }}
+            >
+              🚀 Login with {selectedMethod.toUpperCase()} Method
+            </button>
+
+            <div style={{ marginTop: '15px', fontSize: '14px', color: '#666' }}>
+              <strong>Methods Comparison:</strong><br />
+              • <strong>POST:</strong> More secure, form-based submission<br />
+              • <strong>Redirect:</strong> Simpler, URL-based redirect
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={() => handleSamlLogin('post')}
+              style={{
+                background: '#dc3545',
+                color: 'white',
+                padding: '10px 15px',
+                border: 'none',
+                cursor: 'pointer',
+                borderRadius: '5px'
+              }}
+            >
+              🔴 Quick POST Login
+            </button>
+            <button
+              onClick={() => handleSamlLogin('redirect')}
+              style={{
+                background: '#28a745',
+                color: 'white',
+                padding: '10px 15px',
+                border: 'none',
+                cursor: 'pointer',
+                borderRadius: '5px'
+              }}
+            >
+              🟢 Quick Redirect Login
+            </button>
+          </div>
         </div>
       ) : (
         <div>
@@ -137,6 +200,13 @@ const App = () => {
             <p><strong>Title:</strong> {samlSession.attributes?.title}</p>
             <p><strong>Session Index:</strong> {samlSession.sessionIndex}</p>
             <p><strong>Issuer:</strong> {samlSession.issuer}</p>
+            <p><strong>Auth Method:</strong> <span style={{
+              background: samlSession?.method === 'GET' ? '#28a745' : '#dc3545',
+              color: 'white',
+              padding: '2px 6px',
+              borderRadius: '3px',
+              fontSize: '12px'
+            }}>{samlSession?.method || 'POST'}</span></p>
 
             {samlSession.attributes && (
               <details style={{ marginTop: '10px' }}>
@@ -214,6 +284,13 @@ const App = () => {
                 <h4>{privateData.message}</h4>
                 <p><strong>App ID:</strong> {privateData.appId}</p>
                 <p><strong>Timestamp:</strong> {privateData.timestamp}</p>
+                <p><strong>SAML Method:</strong> <span style={{
+                  background: privateData.samlMethod === 'GET' ? '#28a745' : '#dc3545',
+                  color: 'white',
+                  padding: '2px 6px',
+                  borderRadius: '3px',
+                  fontSize: '12px'
+                }}>{privateData.samlMethod || 'Unknown'}</span></p>
 
                 {privateData.user && (
                   <div>
@@ -249,3 +326,5 @@ const App = () => {
 };
 
 export default App;
+
+ 

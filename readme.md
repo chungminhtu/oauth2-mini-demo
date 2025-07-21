@@ -742,3 +742,82 @@ This SAML 2.0 demo showcases:
 
 http://localhost:4001/sp/sso/initiate?app=app3 → Should redirect to http://localhost:4003
 http://localhost:4001/sp/sso/initiate?app=app4 → Should redirect to http://localhost:4004
+
+# Differences between HTTP-POST and HTTP-Redirect binding methods
+POST keeps SAMLRequest secure in the HTTP body, while Redirect puts it in the URL (visible but simpler). Both end with POST to ACS!
+
+```mermaid
+sequenceDiagram
+    participant Browser as User Browser
+    participant App as App 3/4<br/>(Frontend)
+    participant SP as Service Provider<br/>(http://localhost:4001)
+    participant IdP as Identity Provider<br/>(http://localhost:4002)
+
+    Note over Browser,IdP: 🔴 HTTP-POST Binding Method (More Secure)
+    
+    Browser->>App: Click "🔴 Login with POST Method"
+    App->>SP: GET /sp/sso/initiate-post?app=app3&returnUrl=...
+    activate SP
+    
+    SP->>SP: Generate SAML AuthnRequest<br/>+ RequestID=_uuid<br/>+ IssueInstant=timestamp
+    SP->>SP: Base64 encode AuthnRequest<br/>+ Create RelayState JSON
+    SP->>Browser: HTML with Auto-Submit Form
+    
+    Note right of SP: &lt;form method="POST" action="http://localhost:4002/idp/sso"&gt;<br/>&lt;input name="SAMLRequest" value="base64XML..." /&gt;<br/>&lt;input name="RelayState" value='{"app":"app3"}' /&gt;<br/>&lt;/form&gt;
+    
+    Browser->>IdP: HTTP POST http://localhost:4002/idp/sso<br/>Content-Type: application/x-www-form-urlencoded<br/>Body: SAMLRequest=base64...&RelayState=...
+    activate IdP
+    
+    IdP->>IdP: Decode Base64 SAMLRequest<br/>+ Parse XML AuthnRequest<br/>+ Extract RequestID
+    IdP->>Browser: Login Form HTML<br/>(Email/Password + hidden SAMLRequest)
+    Browser->>Browser: User enters credentials<br/>(john@example.com / password123)
+    Browser->>IdP: HTTP POST /idp/login<br/>Body: email=john@example.com&password=...&SAMLRequest=...
+    IdP->>IdP: Validate credentials<br/>+ Generate SAML Response<br/>+ InResponseTo=RequestID
+    IdP->>Browser: Auto-Submit Form to SP ACS
+    
+    Note right of IdP: &lt;form method="POST" action="http://localhost:4001/sp/acs"&gt;<br/>&lt;input name="SAMLResponse" value="base64Response..." /&gt;<br/>&lt;input name="RelayState" value='{"app":"app3"}' /&gt;<br/>&lt;/form&gt;
+    
+    Browser->>SP: HTTP POST http://localhost:4001/sp/acs<br/>Body: SAMLResponse=base64...&RelayState=...
+    SP->>SP: Decode SAML Response<br/>+ Validate Assertion<br/>+ Create Session<br/>+ Extract user attributes
+    SP->>Browser: HTTP 302 Redirect<br/>Location: http://localhost:4003
+    deactivate SP
+    deactivate IdP
+
+    Note over Browser,IdP: 🟢 HTTP-Redirect Binding Method (Simpler)
+    
+    Browser->>App: Click "🟢 Login with Redirect Method"
+    App->>SP: GET /sp/sso/initiate-redirect?app=app4&returnUrl=...
+    activate SP
+    
+    SP->>SP: Generate SAML AuthnRequest<br/>+ RequestID=_uuid<br/>+ IssueInstant=timestamp
+    SP->>SP: Base64 + URL encode AuthnRequest<br/>+ Create RelayState JSON
+    SP->>Browser: HTTP 302 Redirect<br/>Location: http://localhost:4002/idp/sso?SAMLRequest=urlEncoded...&RelayState=urlEncoded...
+    
+    Browser->>IdP: HTTP GET http://localhost:4002/idp/sso<br/>Query Params:<br/>- SAMLRequest=base64UrlEncoded...<br/>- RelayState=urlEncodedJSON...
+    activate IdP
+    
+    IdP->>IdP: URL decode + Base64 decode SAMLRequest<br/>+ Parse XML AuthnRequest<br/>+ Extract RequestID
+    IdP->>Browser: Login Form HTML<br/>(Same form but method=GET in URL)
+    Browser->>Browser: User enters credentials<br/>(john@example.com / password123)
+    Browser->>IdP: HTTP POST /idp/login<br/>Body: email=john@example.com&password=...&SAMLRequest=...&originalMethod=GET
+    IdP->>IdP: Validate credentials<br/>+ Generate SAML Response<br/>+ InResponseTo=RequestID
+    IdP->>Browser: Auto-Submit Form to SP ACS
+    
+    Note right of IdP: &lt;form method="POST" action="http://localhost:4001/sp/acs"&gt;<br/>&lt;input name="SAMLResponse" value="base64Response..." /&gt;<br/>&lt;input name="RelayState" value='{"app":"app4"}' /&gt;<br/>&lt;/form&gt;<br/>Note: Response always uses POST
+    
+    Browser->>SP: HTTP POST http://localhost:4001/sp/acs<br/>Body: SAMLResponse=base64...&RelayState=...
+    SP->>SP: Decode SAML Response<br/>+ Validate Assertion<br/>+ Create Session<br/>+ Extract user attributes
+    SP->>Browser: HTTP 302 Redirect<br/>Location: http://localhost:4004
+    deactivate SP
+    deactivate IdP
+
+    Note over Browser,IdP: 📊 Technical Comparison
+    
+    rect rgb(255, 200, 200)
+        Note over Browser,IdP: HTTP-POST Binding:<br/>✅ SAMLRequest in HTTP POST body<br/>✅ More secure (not visible in URL/logs)<br/>✅ Can handle larger payloads (>2048 chars)<br/>✅ Content-Type: application/x-www-form-urlencoded<br/>❌ Requires JavaScript for auto-submit
+    end
+    
+    rect rgb(200, 255, 200)
+        Note over Browser,IdP: HTTP-Redirect Binding:<br/>✅ SAMLRequest in URL query parameters<br/>✅ Simpler implementation (no forms)<br/>✅ Works without JavaScript<br/>✅ Faster (fewer network calls)<br/>❌ Visible in browser history/logs<br/>❌ URL length limitations (~2048 chars)<br/>❌ GET request can be cached
+    end
+```
